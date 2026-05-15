@@ -70,7 +70,8 @@ export default function VoicePage() {
   const [voiceState, setVoiceState] = useState<VoiceState>("idle");
   const [transcript, setTranscript] = useState<TranscriptLine[]>([]);
   const [duration, setDuration] = useState(0);
-  const [sessionId] = useState(() => genId());
+  // Generate sessionId client-side only to avoid SSR hydration mismatch
+  const [sessionId, setSessionId] = useState("");
   const [isRecording, setIsRecording] = useState(false);
   const [sessionActive, setSessionActive] = useState(false);
 
@@ -81,6 +82,11 @@ export default function VoicePage() {
 
   const dept = getDept(deptId);
   const Icon = dept.icon;
+
+  /* Generate sessionId on mount (client only) */
+  useEffect(() => {
+    setSessionId(genId());
+  }, []);
 
   /* Read ?dept= from URL */
   useEffect(() => {

@@ -126,7 +126,8 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [wsState, setWsState] = useState<WsState>("closed");
   const [typing, setTyping] = useState(false);
-  const [sessionId] = useState(() => genId());
+  // Generate sessionId client-side only to avoid SSR hydration mismatch
+  const [sessionId, setSessionId] = useState("");
 
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -134,6 +135,11 @@ export default function ChatPage() {
 
   const dept = getDept(deptId);
   const Icon = dept.icon;
+
+  /* Generate sessionId on mount */
+  useEffect(() => {
+    setSessionId(genId());
+  }, []);
 
   /* Read ?dept= from URL on mount */
   useEffect(() => {
@@ -177,17 +183,21 @@ export default function ChatPage() {
 
     ws.onmessage = (ev) => {
       try {
-        const data = JSON.parse(ev.data as string) as {
-          type?: string;
-          content?: string;
-          message?: string;
-        };
+        const data = JSON.parse(ev.data as string) as any;
         setTyping(false);
         if (data.type === "typing") {
           setTyping(true);
           return;
         }
-        const text = data.content ?? data.message ?? String(ev.data);
+        // Backend sends full ChatResponse: { message: { content: string, ... }, ... }
+        const text: string =
+          typeof data?.message?.content === "string"
+            ? data.message.content
+            : typeof data?.content === "string"
+            ? data.content
+            : typeof data?.message === "string"
+            ? data.message
+            : String(ev.data);
         setMessages((prev) => [
           ...prev,
           { id: genId(), role: "assistant", content: text, timestamp: new Date(), dept: deptId },
@@ -241,11 +251,20 @@ export default function ChatPage() {
         body: JSON.stringify({ message: text, department: deptId, session_id: sessionId }),
       })
         .then((r) => r.json())
-        .then((data) => {
+        .then((data: any) => {
           setTyping(false);
-          const reply = (data as { response?: string; message?: string }).response
-            ?? (data as { response?: string; message?: string }).message
-            ?? "No response";
+          // API shape: { message: { role, content, ... }, department, ... }
+          // Safely extract the content string regardless of nesting
+          const reply: string =
+            typeof data?.message?.content === "string"
+              ? data.message.content
+              : typeof data?.content === "string"
+              ? data.content
+              : typeof data?.response === "string"
+              ? data.response
+              : typeof data?.message === "string"
+              ? data.message
+              : "No response";
           setMessages((prev) => [
             ...prev,
             { id: genId(), role: "assistant", content: reply, timestamp: new Date(), dept: deptId },
@@ -414,10 +433,10 @@ export default function ChatPage() {
                     }`}
                   >
                     {isUser ? (
-                      <p>{msg.content}</p>
+                      <p>{String(msg.content ?? "")}</p>
                     ) : (
                       <div className="prose prose-invert prose-sm max-w-none prose-p:my-1 prose-headings:text-slate-100">
-                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                        <ReactMarkdown>{typeof msg.content === "string" ? msg.content : String(msg.content ?? "")}</ReactMarkdown>
                       </div>
                     )}
                   </div>
