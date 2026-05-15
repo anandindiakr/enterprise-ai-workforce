@@ -15,14 +15,15 @@ router = APIRouter()
 
 
 @router.websocket("/ws/chat")
-async def chat_socket(ws: WebSocket) -> None:
+@router.websocket("/ws/chat/{session_id}")
+async def chat_socket(ws: WebSocket, session_id: str | None = None) -> None:
     """Bidirectional chat WebSocket.
 
     Inbound frames: ``{"message": str, "department"?: str, "metadata"?: {...}}``.
     Outbound frames: ChatResponse JSON.
     """
     await ws.accept()
-    session_id = uuid4().hex
+    session_id = session_id or uuid4().hex
     user_id = ws.query_params.get("user_id", "anonymous")
     tenant_id = ws.query_params.get("tenant_id")
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import time
 from uuid import uuid4
 
@@ -23,6 +24,33 @@ from app.telemetry.metrics import (
     escalations_total,
 )
 from app.voice.session import _detect_control_signals  # reuse signal parser
+
+# Swarms agent.run() returns the raw conversation accumulation:
+#   {task}\n[{tool_calls_json}]\nFunction '{name}' result:\n{json}\n{response}
+# We extract only the final natural-language response after the last tool block.
+_FUNC_RESULT_RE = re.compile(
+    r"Function '[^']+' result:\s*\{.*?\}",
+    re.DOTALL,
+)
+
+
+def _extract_agent_text(raw: str) -> str:
+    """Return only the final assistant text from raw agent.run() output."""
+    if not raw:
+        return ""
+
+    # Split on tool-call patterns and take the text that follows the last one
+    parts = _FUNC_RESULT_RE.split(raw)
+    final = parts[-1].strip()
+
+    if final:
+        # Strip leading/trailing JSON array artefacts e.g. "[{...}]\n"
+        final = re.sub(r"^\s*\[.*?\]\s*", "", final, flags=re.DOTALL).strip()
+        return final
+
+    # Fallback: if whole string is None markers just return empty
+    cleaned = re.sub(r"(Current Internal Reasoning Loop[^\n]*|Final Internal Reasoning Loop[^\n]*|None)\n?", "", raw)
+    return cleaned.strip()
 
 
 class ChatService:
@@ -72,7 +100,7 @@ class ChatService:
                 department.value, "success" if wf.succeeded else "error"
             ).inc()
 
-            text = str(wf.output) if wf.output is not None else ""
+            text = _extract_agent_text(str(wf.output) if wf.output is not None else "")
             escalation, transferred = _detect_control_signals(text)
             if escalation != EscalationLevel.NONE:
                 escalations_total.labels(department.value, escalation.value).inc()

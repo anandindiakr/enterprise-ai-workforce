@@ -43,7 +43,7 @@ class Message(BaseModel):
 
 class ChatRequest(BaseModel):
     session_id: str | None = None
-    user_id: str
+    user_id: str = "anonymous"
     tenant_id: str | None = None
     department: Department | None = None
     message: str

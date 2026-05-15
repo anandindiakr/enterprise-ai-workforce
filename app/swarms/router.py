@@ -122,15 +122,23 @@ class WorkforceRouter:
         ):
             start = time.perf_counter()
             try:
-                router = SwarmRouter(
-                    name=f"workforce-{plan.department.value}",
-                    description=f"Workforce dispatch for {plan.department.value}",
-                    agents=plan.agents,
-                    swarm_type=plan.strategy.value,
-                    max_loops=1,
-                )
-                # Swarms `run` is sync; offload to a thread to keep API event loop snappy.
-                output = await asyncio.to_thread(router.run, request.task)
+                # Single-agent path: bypass SwarmRouter entirely.
+                # SwarmRouter wraps SequentialWorkflow / AgentRearrange which require a
+                # multi-agent "->" flow string -- that validation fails with one agent.
+                if len(plan.agents) == 1:
+                    agent = plan.agents[0]
+                    output = await asyncio.to_thread(agent.run, request.task)
+                else:
+                    router = SwarmRouter(
+                        name=f"workforce-{plan.department.value}",
+                        description=f"Workforce dispatch for {plan.department.value}",
+                        agents=plan.agents,
+                        swarm_type=plan.strategy.value,
+                        max_loops=1,
+                    )
+                    # Swarms `run` is sync; offload to a thread to keep API event loop snappy.
+                    output = await asyncio.to_thread(router.run, request.task)
+
                 duration_ms = int((time.perf_counter() - start) * 1000)
                 swarm_executions_total.labels(plan.strategy.value, plan.department.value).inc()
                 return WorkflowResult(

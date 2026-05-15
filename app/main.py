@@ -26,9 +26,36 @@ from app.memory.short_term import short_term_memory
 from app.telemetry.tracing import init_tracing
 
 
+def _export_llm_keys() -> None:
+    """Reflect LLM/voice API keys from pydantic settings back into os.environ.
+
+    LiteLLM (used by Swarms) and most provider SDKs read keys directly from
+    os.environ.  When running locally without Docker the keys are in the .env
+    file but pydantic-settings does not write them back automatically.
+    """
+    import os
+
+    key_map = {
+        "OPENAI_API_KEY": settings.openai_api_key,
+        "ANTHROPIC_API_KEY": settings.anthropic_api_key,
+        "DEEPGRAM_API_KEY": settings.deepgram_api_key,
+        "ELEVENLABS_API_KEY": settings.elevenlabs_api_key,
+        "LIVEKIT_API_KEY": settings.livekit_api_key,
+        "LIVEKIT_API_SECRET": settings.livekit_api_secret,
+        "LIVEKIT_URL": settings.livekit_url,
+        "TWILIO_ACCOUNT_SID": settings.twilio_account_sid,
+        "TWILIO_AUTH_TOKEN": settings.twilio_auth_token,
+        "AZURE_SPEECH_KEY": settings.azure_speech_key,
+    }
+    for env_var, value in key_map.items():
+        if value and not os.environ.get(env_var):
+            os.environ[env_var] = value
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     configure_logging()
+    _export_llm_keys()
     init_tracing()
     logger.info("AI Workforce starting (env={})", settings.app_env)
 

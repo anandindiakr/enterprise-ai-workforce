@@ -52,9 +52,9 @@ class AppSettings(BaseSettings):
     # --- LLM ---
     openai_api_key: str = ""
     anthropic_api_key: str = ""
-    default_model: str = "gpt-4.1"
-    default_fast_model: str = "gpt-4.1-mini"
-    default_reasoning_model: str = "claude-opus-4-7-20251001"
+    default_model: str = "gpt-4o-mini"
+    default_fast_model: str = "gpt-4o-mini"
+    default_reasoning_model: str = "gpt-4o"
 
     # --- Voice ---
     deepgram_api_key: str = ""

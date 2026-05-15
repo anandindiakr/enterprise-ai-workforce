@@ -64,7 +64,7 @@ def decode_token(token: str) -> dict[str, Any]:
 
 async def get_principal(
     token: str | None = Depends(oauth2_scheme),
-    api_key: str | None = Header(default=None, alias=None),
+    api_key: str | None = Header(default=None, alias="x-api-key"),
 ) -> Principal:
     """Resolve the calling principal from JWT bearer or internal API key."""
     # Internal service-to-service path
@@ -84,6 +84,36 @@ async def get_principal(
         roles=payload.get("roles", []),
         scopes=payload.get("scopes", []),
     )
+
+
+async def optional_principal(
+    token: str | None = Depends(oauth2_scheme),
+    api_key: str | None = Header(default=None, alias="x-api-key"),
+) -> Principal:
+    """Like get_principal but returns an anonymous principal when no credentials are provided.
+
+    Useful for endpoints that work both authenticated and unauthenticated
+    (e.g. demo chat, health probes).
+    """
+    # Internal service key
+    if api_key and api_key == settings.internal_api_key:
+        return Principal(user_id="system", roles=["service"], scopes=["*"])
+
+    # Valid JWT
+    if token:
+        try:
+            payload = decode_token(token)
+            return Principal(
+                user_id=payload.get("sub", "anonymous"),
+                tenant_id=payload.get("tenant_id"),
+                roles=payload.get("roles", []),
+                scopes=payload.get("scopes", []),
+            )
+        except Exception:
+            pass  # fall through to anonymous
+
+    # Anonymous / unauthenticated
+    return Principal(user_id="anonymous", roles=["guest"], scopes=["chat:read", "chat:write"])
 
 
 def require_roles(*required: str):

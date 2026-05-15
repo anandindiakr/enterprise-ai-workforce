@@ -24,9 +24,14 @@ from app.mcp import mcp_registry
 
 
 def _make_mcp_tool(connector_name: str) -> Callable[..., Any]:
-    """Create a Python callable bridging Swarms tool calls to MCP."""
+    """Create a *synchronous* callable bridging Swarms tool calls to MCP.
 
-    async def _tool(tool: str, **arguments: Any) -> dict[str, Any]:
+    Swarms calls tool functions synchronously (no await).  The agent.run()
+    itself is offloaded to a thread via asyncio.to_thread(), so there is no
+    running event loop in that thread -- asyncio.run() is safe here.
+    """
+
+    def _tool(tool: str, **arguments: Any) -> dict[str, Any]:
         """Invoke an MCP tool on the bound connector.
 
         Args:
@@ -36,15 +41,26 @@ def _make_mcp_tool(connector_name: str) -> Callable[..., Any]:
         Returns:
             Structured result dictionary with ``success``, ``data``, ``error``.
         """
-        result = await mcp_registry().call(connector_name, tool, arguments)
-        return {
-            "success": result.success,
-            "data": result.data,
-            "error": result.error,
-            "duration_ms": result.duration_ms,
-            "connector": connector_name,
-            "tool": tool,
-        }
+        import asyncio
+
+        try:
+            result = asyncio.run(mcp_registry().call(connector_name, tool, arguments))
+            return {
+                "success": result.success,
+                "data": result.data,
+                "error": result.error,
+                "duration_ms": result.duration_ms,
+                "connector": connector_name,
+                "tool": tool,
+            }
+        except Exception as exc:
+            return {
+                "success": False,
+                "error": str(exc),
+                "connector": connector_name,
+                "tool": tool,
+                "data": None,
+            }
 
     _tool.__name__ = f"mcp_{connector_name}"
     _tool.__doc__ = (
@@ -55,8 +71,15 @@ def _make_mcp_tool(connector_name: str) -> Callable[..., Any]:
 
 
 def _build_agent(profile: AgentProfile, *, system_prompt: str | None = None) -> Agent:
+    # Only attach MCP tools for connectors that are actually configured.
+    # When tools are registered on a Swarms Agent, the LLM is expected to respond
+    # with tool calls.  If all connectors are unconfigured (no URL) the model will
+    # respond with plain text, which Swarms' tool-execution path returns as None.
+    reg = mcp_registry()
     tools: list[Callable[..., Any]] = [
-        _make_mcp_tool(name) for name in profile.mcp_connectors
+        _make_mcp_tool(name)
+        for name in profile.mcp_connectors
+        if (conn := reg.get(name)) is not None and conn.is_configured
     ]
 
     agent = Agent(

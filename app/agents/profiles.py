@@ -86,7 +86,7 @@ RECEPTIONIST_PROFILE = AgentProfile(
     personality="Warm, professional, efficient.",
     style="Brief, welcoming, directive.",
     model=settings.default_fast_model,
-    max_loops="auto",
+    max_loops=1,
     languages=("en", "es", "fr", "de", "it"),
     capabilities=("intent_classification", "routing", "greeting", "language_detect"),
     mcp_connectors=("calendar",),
@@ -105,7 +105,7 @@ CUSTOMER_CARE_PROFILE = AgentProfile(
     personality="Empathetic, patient, solution-oriented.",
     style="Plainspoken, reassuring, structured.",
     model=settings.default_model,
-    max_loops="auto",
+    max_loops=1,
     capabilities=("issue_resolution", "ticketing", "kb_lookup", "rag"),
     mcp_connectors=("knowledge", "ticketing", "crm"),
 )
@@ -122,7 +122,7 @@ SALES_PROFILE = AgentProfile(
     personality="Confident, consultative, persuasive but never pushy.",
     style="Value-driven, ROI-focused.",
     model=settings.default_model,
-    max_loops=2,
+    max_loops=1,
     capabilities=("lead_qualification", "crm_update", "demo_scheduling", "proposal_drafting"),
     mcp_connectors=("crm", "calendar", "email"),
 )
@@ -156,7 +156,7 @@ FINANCE_PROFILE = AgentProfile(
     personality="Precise, careful, audit-aware.",
     style="Numerically rigorous, cites sources.",
     model=settings.default_reasoning_model,
-    max_loops="auto",
+    max_loops=1,
     capabilities=("invoicing", "expense_lookup", "reporting", "budget_analysis"),
     mcp_connectors=("erp", "analytics"),
 )
@@ -173,7 +173,7 @@ TECHNOLOGY_PROFILE = AgentProfile(
     personality="Calm, methodical, technically rigorous.",
     style="Step-by-step troubleshooting with clear instructions.",
     model=settings.default_reasoning_model,
-    max_loops="auto",
+    max_loops=1,
     capabilities=("diagnostics", "troubleshooting", "incident_creation", "runbook_execution"),
     mcp_connectors=("ticketing", "knowledge"),
 )
@@ -190,7 +190,7 @@ MARKETING_PROFILE = AgentProfile(
     personality="Creative, brand-aware, data-informed.",
     style="On-brand, energetic, audience-tuned.",
     model=settings.default_model,
-    max_loops=2,
+    max_loops=1,
     capabilities=("content_generation", "campaign_analysis", "segmentation", "copywriting"),
     mcp_connectors=("email", "analytics"),
 )
