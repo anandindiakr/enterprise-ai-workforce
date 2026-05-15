@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect, useState } from "react";
 import {
   LayoutDashboard,
   MessageSquare,
@@ -17,8 +17,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Zap,
+  LogOut,
+  User,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { clearAuth, getUser, type AuthUser } from "@/lib/auth";
 
 const NAV = [
   { href: "/", icon: LayoutDashboard, label: "Dashboard" },
@@ -27,18 +30,33 @@ const NAV = [
 ];
 
 const DEPARTMENTS = [
-  { id: "reception", label: "Reception", icon: Star, color: "text-amber-400" },
-  { id: "customer_care", label: "Customer Care", icon: Headphones, color: "text-cyan-400" },
-  { id: "sales", label: "Sales", icon: ShoppingCart, color: "text-emerald-400" },
-  { id: "hr", label: "HR", icon: Users, color: "text-violet-400" },
-  { id: "finance", label: "Finance", icon: DollarSign, color: "text-rose-400" },
-  { id: "technology", label: "Technology", icon: Cpu, color: "text-blue-400" },
-  { id: "marketing", label: "Marketing", icon: Megaphone, color: "text-orange-400" },
+  { id: "reception",    label: "Reception",     icon: Star,         color: "text-amber-400"  },
+  { id: "customer_care",label: "Customer Care", icon: Headphones,   color: "text-cyan-400"   },
+  { id: "sales",        label: "Sales",         icon: ShoppingCart, color: "text-emerald-400"},
+  { id: "hr",           label: "HR",            icon: Users,        color: "text-violet-400" },
+  { id: "finance",      label: "Finance",       icon: DollarSign,   color: "text-rose-400"   },
+  { id: "technology",   label: "Technology",    icon: Cpu,          color: "text-blue-400"   },
+  { id: "marketing",    label: "Marketing",     icon: Megaphone,    color: "text-orange-400" },
 ];
 
 export function Sidebar() {
-  const path = usePathname();
+  const path     = usePathname();
+  const router   = useRouter();
   const [collapsed, setCollapsed] = useState(false);
+  const [user, setUser] = useState<AuthUser | null>(null);
+
+  /* Load user from localStorage on mount (client only) */
+  useEffect(() => {
+    setUser(getUser());
+  }, []);
+
+  function handleLogout() {
+    clearAuth();
+    router.push("/login");
+  }
+
+  /* Don't render sidebar on the login page */
+  if (path === "/login") return null;
 
   return (
     <aside
@@ -113,20 +131,47 @@ export function Sidebar() {
         </div>
       )}
 
-      {/* Footer status */}
-      <div className="mt-auto border-t border-[#1f2937] p-3">
+      {/* Footer: user info + logout */}
+      <div className="mt-auto border-t border-[#1f2937] p-3 space-y-2">
+        {!collapsed && user && (
+          <div className="flex items-center gap-2 rounded-lg bg-[#111827] px-2.5 py-2">
+            <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-amber-500/20">
+              <User className="h-3 w-3 text-amber-400" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <p className="truncate font-mono text-[11px] font-medium text-slate-300">{user.username}</p>
+              <p className="font-mono text-[9px] uppercase tracking-wider text-slate-600">{user.roles[0] ?? "user"}</p>
+            </div>
+            <button
+              onClick={handleLogout}
+              title="Sign out"
+              className="text-slate-600 transition-colors hover:text-red-400"
+            >
+              <LogOut className="h-3.5 w-3.5" />
+            </button>
+          </div>
+        )}
+
+        {collapsed && (
+          <button
+            onClick={handleLogout}
+            title="Sign out"
+            className="flex w-full items-center justify-center rounded-lg border border-[#1f2937] p-1.5 text-slate-600 transition-colors hover:border-red-500/30 hover:text-red-400"
+          >
+            <LogOut className="h-3.5 w-3.5" />
+          </button>
+        )}
+
         {!collapsed && (
-          <div className="mb-2 flex items-center gap-2 px-1">
+          <div className="flex items-center gap-2 px-1">
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 status-pulse" />
             <span className="font-mono text-[10px] text-slate-500">ALL SYSTEMS NOMINAL</span>
           </div>
         )}
+
         <button
           onClick={() => setCollapsed((c) => !c)}
-          className={cn(
-            "flex items-center justify-center rounded-lg border border-[#1f2937] p-1.5 text-slate-500 transition-colors hover:border-[#374151] hover:text-slate-300",
-            collapsed ? "w-full" : "w-full"
-          )}
+          className="flex w-full items-center justify-center rounded-lg border border-[#1f2937] p-1.5 text-slate-500 transition-colors hover:border-[#374151] hover:text-slate-300"
           title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
         >
           {collapsed ? (

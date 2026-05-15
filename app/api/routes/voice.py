@@ -1,21 +1,27 @@
-"""Voice REST endpoints (session bootstrap, telephony, telephony webhook)."""
+"""Voice REST endpoints — session management, STT, TTS, telephony."""
 
 from __future__ import annotations
 
+import io
+import os
 from datetime import datetime, timedelta, timezone
+from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from fastapi.responses import PlainTextResponse
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import PlainTextResponse, StreamingResponse
+from pydantic import BaseModel
 
 from app.core.config import settings
 from app.core.types import Department
 from app.models.schemas import Principal, VoiceSessionDescriptor, VoiceSessionStartRequest
-from app.security.auth import get_principal
+from app.security.auth import get_optional_principal, get_principal
 from app.voice.gateway import voice_gateway
 from app.voice.session import voice_session_manager
 
 router = APIRouter(prefix="/voice", tags=["voice"])
 
+
+# ── Voice Session Management ────────────────────────────────────────────────
 
 @router.post("/sessions", response_model=VoiceSessionDescriptor)
 async def open_voice_session(
@@ -51,22 +57,185 @@ async def close_voice_session(
     return {"closed": True, "session_id": session_id}
 
 
-# ---- Twilio inbound webhook ---------------------------------------------
+# ── Speech-to-Text ──────────────────────────────────────────────────────────
 
+@router.post("/transcribe")
+async def transcribe_audio(
+    audio: UploadFile = File(...),
+    department: Optional[str] = Form(None),
+    principal: Principal = Depends(get_optional_principal),  # noqa: ARG001
+) -> dict:
+    """
+    Accept a browser audio blob (webm/ogg/wav) and return the transcript.
+    Uses Deepgram when DEEPGRAM_API_KEY is set, falls back to OpenAI Whisper.
+    """
+    audio_bytes = await audio.read()
+
+    deepgram_key = os.getenv("DEEPGRAM_API_KEY", "")
+    if deepgram_key:
+        try:
+            transcript = await _deepgram_stt(audio_bytes, audio.content_type or "audio/webm")
+            return {"transcript": transcript, "provider": "deepgram"}
+        except Exception as exc:  # noqa: BLE001
+            # Fall through to Whisper
+            pass
+
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    if openai_key:
+        try:
+            transcript = await _whisper_stt(audio_bytes, audio.filename or "audio.webm")
+            return {"transcript": transcript, "provider": "whisper"}
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"STT failed: {exc}") from exc
+
+    raise HTTPException(
+        status_code=503,
+        detail="No STT provider configured. Set DEEPGRAM_API_KEY or OPENAI_API_KEY.",
+    )
+
+
+async def _deepgram_stt(audio_bytes: bytes, content_type: str) -> str:
+    """Call Deepgram Nova-2 REST API."""
+    import aiohttp  # type: ignore
+
+    url = "https://api.deepgram.com/v1/listen?model=nova-2&language=en&smart_format=true"
+    headers = {
+        "Authorization": f"Token {os.environ['DEEPGRAM_API_KEY']}",
+        "Content-Type": content_type,
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, data=audio_bytes) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                raise RuntimeError(f"Deepgram {resp.status}: {text}")
+            body = await resp.json()
+    transcript = (
+        body.get("results", {})
+            .get("channels", [{}])[0]
+            .get("alternatives", [{}])[0]
+            .get("transcript", "")
+    )
+    return transcript.strip()
+
+
+async def _whisper_stt(audio_bytes: bytes, filename: str) -> str:
+    """Call OpenAI Whisper via the files API."""
+    import aiohttp  # type: ignore
+
+    url = "https://api.openai.com/v1/audio/transcriptions"
+    headers = {"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"}
+    form = aiohttp.FormData()
+    form.add_field("model", "whisper-1")
+    form.add_field("file", audio_bytes, filename=filename, content_type="audio/webm")
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, headers=headers, data=form) as resp:
+            if resp.status != 200:
+                text = await resp.text()
+                raise RuntimeError(f"Whisper {resp.status}: {text}")
+            body = await resp.json()
+    return (body.get("text") or "").strip()
+
+
+# ── Text-to-Speech ──────────────────────────────────────────────────────────
+
+class SpeakRequest(BaseModel):
+    text: str
+    department: Optional[str] = None
+    voice_id: Optional[str] = None
+
+
+@router.post("/speak")
+async def speak_text(
+    payload: SpeakRequest,
+    principal: Principal = Depends(get_optional_principal),  # noqa: ARG001
+) -> StreamingResponse:
+    """
+    Convert text to speech.
+    Uses ElevenLabs when configured, falls back to OpenAI TTS.
+    Returns the raw audio stream (audio/mpeg).
+    """
+    eleven_key = os.getenv("ELEVENLABS_API_KEY", "")
+    if eleven_key:
+        try:
+            audio_bytes = await _elevenlabs_tts(
+                text=payload.text,
+                voice_id=payload.voice_id or os.getenv("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL"),
+            )
+            return StreamingResponse(
+                io.BytesIO(audio_bytes),
+                media_type="audio/mpeg",
+                headers={"Content-Disposition": "inline; filename=speech.mp3"},
+            )
+        except Exception:  # noqa: BLE001
+            pass  # Fall through to OpenAI
+
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    if openai_key:
+        try:
+            audio_bytes = await _openai_tts(payload.text)
+            return StreamingResponse(
+                io.BytesIO(audio_bytes),
+                media_type="audio/mpeg",
+                headers={"Content-Disposition": "inline; filename=speech.mp3"},
+            )
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=502, detail=f"TTS failed: {exc}") from exc
+
+    raise HTTPException(
+        status_code=503,
+        detail="No TTS provider configured. Set ELEVENLABS_API_KEY or OPENAI_API_KEY.",
+    )
+
+
+async def _elevenlabs_tts(text: str, voice_id: str) -> bytes:
+    import aiohttp  # type: ignore
+
+    url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
+    headers = {
+        "xi-api-key": os.environ["ELEVENLABS_API_KEY"],
+        "Content-Type": "application/json",
+    }
+    body = {
+        "text": text,
+        "model_id": "eleven_turbo_v2",
+        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=body, headers=headers) as resp:
+            if resp.status != 200:
+                err = await resp.text()
+                raise RuntimeError(f"ElevenLabs {resp.status}: {err}")
+            return await resp.read()
+
+
+async def _openai_tts(text: str) -> bytes:
+    import aiohttp  # type: ignore
+
+    url = "https://api.openai.com/v1/audio/speech"
+    headers = {
+        "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
+        "Content-Type": "application/json",
+    }
+    body = {"model": "tts-1", "input": text, "voice": "nova", "response_format": "mp3"}
+    async with aiohttp.ClientSession() as session:
+        async with session.post(url, json=body, headers=headers) as resp:
+            if resp.status != 200:
+                err = await resp.text()
+                raise RuntimeError(f"OpenAI TTS {resp.status}: {err}")
+            return await resp.read()
+
+
+# ── Twilio inbound webhook ──────────────────────────────────────────────────
 
 @router.post("/twilio/incoming", response_class=PlainTextResponse)
 async def twilio_incoming(request: Request) -> str:
-    """TwiML endpoint that bridges an inbound PSTN call to our voice WS."""
     from app.voice.providers.twilio_provider import TwilioVoiceProvider
 
     provider = TwilioVoiceProvider()
     if not provider.is_configured():
         raise HTTPException(status_code=503, detail="Twilio not configured")
 
-    base = str(request.base_url).rstrip("/").replace("http://", "wss://").replace(
-        "https://", "wss://"
-    )
-    # Inbound PSTN calls are routed via the receptionist.
+    base = str(request.base_url).rstrip("/").replace("http://", "wss://").replace("https://", "wss://")
     sess = await voice_session_manager().open(
         user_id="phone-caller",
         tenant_id=None,
@@ -77,8 +246,7 @@ async def twilio_incoming(request: Request) -> str:
     return provider.inbound_twiml(ws_url=ws_url, greeting="Connecting you to the AI workforce.")
 
 
-# ---- LiveKit join token --------------------------------------------------
-
+# ── LiveKit join token ──────────────────────────────────────────────────────
 
 @router.post("/livekit/token")
 async def livekit_token(

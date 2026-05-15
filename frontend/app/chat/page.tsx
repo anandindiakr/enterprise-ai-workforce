@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import Link from "next/link";
+import { authHeaders } from "@/lib/auth";
 import {
   Send,
   Paperclip,
@@ -247,7 +248,7 @@ export default function ChatPage() {
       const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
       fetch(`${apiBase}/api/v1/chat`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
+        headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ message: text, department: deptId, session_id: sessionId }),
       })
         .then((r) => r.json())

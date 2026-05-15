@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
+import { authHeaders } from "@/lib/auth";
 import {
   Mic,
   MicOff,
@@ -202,6 +203,7 @@ export default function VoicePage() {
 
     fetch(`${apiBase}/api/v1/voice/transcribe`, {
       method: "POST",
+      headers: { ...authHeaders() },
       body: formData,
     })
       .then((r) => r.json())
@@ -214,22 +216,43 @@ export default function VoicePage() {
         );
         return fetch(`${apiBase}/api/v1/chat`, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", ...authHeaders() },
           body: JSON.stringify({ message: transcribed, department: deptId, session_id: sessionId }),
         });
       })
       .then((r) => r.json())
-      .then((data) => {
+      .then(async (data) => {
         setVoiceState("speaking");
         const reply =
-          (data as { response?: string; message?: string }).response ??
-          (data as { response?: string; message?: string }).message ??
+          (data as { response?: string; message?: { content?: string } | string }).response ??
+          ((data as { message?: { content?: string } | string }).message as { content?: string })?.content ??
+          (typeof (data as { message?: string }).message === "string" ? (data as { message?: string }).message : undefined) ??
           "I processed your request.";
         setTranscript((prev) => [
           ...prev,
           { id: genId(), speaker: "agent", text: reply, timestamp: new Date() },
         ]);
-        setTimeout(() => setVoiceState("idle"), 2000);
+
+        /* TTS: request audio from ElevenLabs via backend, then play it */
+        try {
+          const ttsRes = await fetch(`${apiBase}/api/v1/voice/speak`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json", ...authHeaders() },
+            body: JSON.stringify({ text: reply, department: deptId }),
+          });
+          if (ttsRes.ok) {
+            const audioBlob = await ttsRes.blob();
+            const audioUrl  = URL.createObjectURL(audioBlob);
+            const audio     = new Audio(audioUrl);
+            audio.onended   = () => { setVoiceState("idle"); URL.revokeObjectURL(audioUrl); };
+            audio.onerror   = () => setVoiceState("idle");
+            await audio.play();
+          } else {
+            setTimeout(() => setVoiceState("idle"), 2000);
+          }
+        } catch {
+          setTimeout(() => setVoiceState("idle"), 2000);
+        }
       })
       .catch(() => {
         setVoiceState("idle");

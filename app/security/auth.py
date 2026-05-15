@@ -90,16 +90,10 @@ async def optional_principal(
     token: str | None = Depends(oauth2_scheme),
     api_key: str | None = Header(default=None, alias="x-api-key"),
 ) -> Principal:
-    """Like get_principal but returns an anonymous principal when no credentials are provided.
-
-    Useful for endpoints that work both authenticated and unauthenticated
-    (e.g. demo chat, health probes).
-    """
-    # Internal service key
+    """Like get_principal but returns an anonymous principal when no credentials are provided."""
     if api_key and api_key == settings.internal_api_key:
         return Principal(user_id="system", roles=["service"], scopes=["*"])
 
-    # Valid JWT
     if token:
         try:
             payload = decode_token(token)
@@ -110,10 +104,13 @@ async def optional_principal(
                 scopes=payload.get("scopes", []),
             )
         except Exception:
-            pass  # fall through to anonymous
+            pass
 
-    # Anonymous / unauthenticated
     return Principal(user_id="anonymous", roles=["guest"], scopes=["chat:read", "chat:write"])
+
+
+# Alias used by voice routes
+get_optional_principal = optional_principal
 
 
 def require_roles(*required: str):

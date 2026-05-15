@@ -21,6 +21,7 @@ from app.core.config import settings
 from app.core.exceptions import WorkforceError
 from app.core.logging import configure_logging, logger
 from app.mcp import mcp_registry
+from app.mcp.mock_crm_server import router as crm_mcp_router
 from app.memory.long_term import long_term_memory
 from app.memory.short_term import short_term_memory
 from app.telemetry.tracing import init_tracing
@@ -113,6 +114,9 @@ def create_app() -> FastAPI:
     app.include_router(platform_routes.router, prefix=api_v1)
     app.include_router(chat_ws.router, prefix=api_v1)
     app.include_router(voice_ws.router, prefix=api_v1)
+
+    # Built-in CRM MCP server (Sales Agent uses this at /mcp/crm)
+    app.include_router(crm_mcp_router)
 
     @app.get("/")
     async def root() -> dict:
