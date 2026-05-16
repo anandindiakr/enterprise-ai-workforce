@@ -12,6 +12,7 @@ from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.util import get_remote_address
 
+from app.api.routes.auth import router as auth_router, users_router
 from app.api.routes import auth as auth_routes
 from app.api.routes import chat as chat_routes
 from app.api.routes import platform as platform_routes
@@ -25,6 +26,7 @@ from app.mcp.mock_crm_server import router as crm_mcp_router
 from app.memory.long_term import long_term_memory
 from app.memory.short_term import short_term_memory
 from app.telemetry.tracing import init_tracing
+from app.db.init_db import init_db
 
 
 def _export_llm_keys() -> None:
@@ -61,6 +63,7 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     logger.info("AI Workforce starting (env={})", settings.app_env)
 
     # Bring up infra
+    await init_db()
     await short_term_memory().connect()
     long_term_memory().connect()
     await mcp_registry().initialize_all()
@@ -109,6 +112,7 @@ def create_app() -> FastAPI:
     # Routes
     api_v1 = "/api/v1"
     app.include_router(auth_routes.router, prefix=api_v1)
+    app.include_router(auth_routes.users_router, prefix=api_v1)
     app.include_router(chat_routes.router, prefix=api_v1)
     app.include_router(voice_routes.router, prefix=api_v1)
     app.include_router(platform_routes.router, prefix=api_v1)

@@ -244,32 +244,70 @@ export default function ChatPage() {
         JSON.stringify({ message: text, department: deptId, session_id: sessionId })
       );
     } else {
-      /* Fallback: REST */
+      /* Fallback: SSE streaming REST */
       const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
-      fetch(`${apiBase}/api/v1/chat`, {
+      const streamingId = genId();
+
+      fetch(`${apiBase}/api/v1/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ message: text, department: deptId, session_id: sessionId }),
+        body: JSON.stringify({ message: text, department: deptId, session_id: sessionId, streaming: true }),
       })
-        .then((r) => r.json())
-        .then((data: any) => {
-          setTyping(false);
-          // API shape: { message: { role, content, ... }, department, ... }
-          // Safely extract the content string regardless of nesting
-          const reply: string =
-            typeof data?.message?.content === "string"
-              ? data.message.content
-              : typeof data?.content === "string"
-              ? data.content
-              : typeof data?.response === "string"
-              ? data.response
-              : typeof data?.message === "string"
-              ? data.message
-              : "No response";
-          setMessages((prev) => [
-            ...prev,
-            { id: genId(), role: "assistant", content: reply, timestamp: new Date(), dept: deptId },
-          ]);
+        .then(async (res) => {
+          if (!res.ok || !res.body) {
+            throw new Error(`HTTP ${res.status}`);
+          }
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          let streamingMsgAdded = false;
+
+          while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+            const lines = buffer.split("\n");
+            buffer = lines.pop() ?? "";
+
+            for (const line of lines) {
+              if (!line.startsWith("data: ")) continue;
+              try {
+                const evt = JSON.parse(line.slice(6)) as any;
+                if (evt.type === "typing") {
+                  setTyping(true);
+                } else if (evt.type === "token") {
+                  setTyping(false);
+                  if (!streamingMsgAdded) {
+                    setMessages((prev) => [
+                      ...prev,
+                      { id: streamingId, role: "assistant", content: evt.token, timestamp: new Date(), dept: deptId },
+                    ]);
+                    streamingMsgAdded = true;
+                  } else {
+                    setMessages((prev) =>
+                      prev.map((m) =>
+                        m.id === streamingId ? { ...m, content: m.content + evt.token } : m
+                      )
+                    );
+                  }
+                } else if (evt.type === "done") {
+                  setTyping(false);
+                  const finalText = evt.response?.message?.content ?? "";
+                  if (finalText) {
+                    setMessages((prev) =>
+                      prev.map((m) => (m.id === streamingId ? { ...m, content: finalText } : m))
+                    );
+                  }
+                } else if (evt.type === "error") {
+                  setTyping(false);
+                  setMessages((prev) => [
+                    ...prev,
+                    { id: genId(), role: "assistant", content: `⚠️ ${evt.message}`, timestamp: new Date(), dept: deptId },
+                  ]);
+                }
+              } catch {}
+            }
+          }
         })
         .catch(() => {
           setTyping(false);

@@ -28,9 +28,9 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
-@router.get("/agents", response_model=list[AgentDescriptor])
-async def list_agents(_: Principal = Depends(get_principal)) -> list[AgentDescriptor]:
-    return [
+@router.get("/agents")
+async def list_agents(_: Principal = Depends(get_principal)) -> dict:
+    agents = [
         AgentDescriptor(
             agent_name=p.agent_name,
             department=p.department,
@@ -41,6 +41,11 @@ async def list_agents(_: Principal = Depends(get_principal)) -> list[AgentDescri
         )
         for p in ALL_DEPARTMENT_PROFILES
     ]
+    return {
+        "agents": [a.model_dump(mode="json") for a in agents],
+        "total": len(agents),
+        "active": len(agents),
+    }
 
 
 @router.post("/workflows", response_model=WorkflowResult)

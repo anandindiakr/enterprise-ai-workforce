@@ -33,10 +33,14 @@ def create_access_token(
     roles: list[str] | None = None,
     scopes: list[str] | None = None,
     expires_minutes: int | None = None,
-) -> tuple[str, int]:
-    """Return ``(token, expires_in_seconds)``."""
-    expire_minutes = expires_minutes or settings.jwt_expire_minutes
-    expire = datetime.now(timezone.utc) + timedelta(minutes=expire_minutes)
+    expires_in: int | None = None,  # seconds override
+) -> str:
+    """Return a signed JWT string."""
+    if expires_in is not None:
+        expire = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
+    else:
+        expire_minutes = expires_minutes or settings.jwt_expire_minutes
+        expire = datetime.now(timezone.utc) + timedelta(minutes=expire_minutes)
     payload: dict[str, Any] = {
         "sub": subject,
         "tenant_id": tenant_id,
@@ -46,8 +50,7 @@ def create_access_token(
         "iat": datetime.now(timezone.utc),
         "iss": settings.app_name,
     }
-    token = jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
-    return token, expire_minutes * 60
+    return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
 def decode_token(token: str) -> dict[str, Any]:
@@ -122,3 +125,13 @@ def require_roles(*required: str):
         return principal
 
     return _checker
+
+
+async def require_admin(principal: Principal = Depends(get_principal)) -> Principal:
+    """Dependency: caller must have the 'admin' role."""
+    if "admin" not in principal.roles and "service" not in principal.roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin role required",
+        )
+    return principal

@@ -19,6 +19,8 @@ import {
   Zap,
   LogOut,
   User,
+  Brain,
+  Settings,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { clearAuth, getUser, type AuthUser } from "@/lib/auth";
@@ -27,6 +29,8 @@ const NAV = [
   { href: "/", icon: LayoutDashboard, label: "Dashboard" },
   { href: "/chat", icon: MessageSquare, label: "Chat Console" },
   { href: "/voice", icon: Mic, label: "Voice Console" },
+  { href: "/agents", icon: Brain, label: "Agents" },
+  { href: "/settings", icon: Settings, label: "Settings" },
 ];
 
 const DEPARTMENTS = [
