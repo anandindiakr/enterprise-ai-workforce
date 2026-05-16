@@ -38,7 +38,7 @@ class AppSettings(BaseSettings):
     jwt_expire_minutes: int = 60
     api_key_header: str = "X-API-Key"
     internal_api_key: str = "internal-svc-key"
-    cors_origins: str = "http://localhost:3000"
+    cors_origins: str = "http://localhost:3000,http://localhost:4000,http://localhost:8080"
 
     # --- Persistence ---
     postgres_dsn: str = "postgresql+asyncpg://workforce:workforce@localhost:5432/workforce"

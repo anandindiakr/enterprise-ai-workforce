@@ -1,8 +1,7 @@
 import "./globals.css";
 import type { Metadata } from "next";
 import { DM_Sans, JetBrains_Mono, Syne } from "next/font/google";
-import { Sidebar } from "@/components/Sidebar";
-import { AuthGuard } from "@/components/AuthGuard";
+import { ClientLayout } from "@/components/ClientLayout";
 
 const dmSans = DM_Sans({
   subsets: ["latin"],
@@ -33,10 +32,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       className={`${dmSans.variable} ${jetbrainsMono.variable} ${syne.variable}`}
     >
       <body className="flex h-screen overflow-hidden bg-[#030712] font-sans">
-        <AuthGuard>
-          <Sidebar />
-          <main className="flex-1 overflow-y-auto bg-grid">{children}</main>
-        </AuthGuard>
+        <ClientLayout>{children}</ClientLayout>
       </body>
     </html>
   );

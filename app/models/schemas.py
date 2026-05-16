@@ -77,7 +77,7 @@ class ToolCall(BaseModel):
 
 
 class VoiceSessionStartRequest(BaseModel):
-    user_id: str
+    user_id: str | None = None
     tenant_id: str | None = None
     department: Department | None = None
     language: str = "en"
