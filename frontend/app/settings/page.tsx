@@ -87,6 +87,122 @@ function SecretField({ value, onChange, placeholder }: { value: string; onChange
   );
 }
 
+/* ── IntegrationsPanel ───────────────────────────────────── */
+
+const INTEGRATION_META: Record<string, { label: string; desc: string; placeholder: string }> = {
+  crm_base_url:       { label: "CRM",       desc: "Salesforce, HubSpot, Pipedrive",          placeholder: "https://crm.yourcompany.com" },
+  hris_base_url:      { label: "HRIS",      desc: "BambooHR, Workday, Gusto",                placeholder: "https://hris.yourcompany.com" },
+  finance_base_url:   { label: "Finance / ERP", desc: "SAP, Oracle, NetSuite",               placeholder: "https://erp.yourcompany.com" },
+  devops_base_url:    { label: "Ticketing / DevOps", desc: "Jira, Zendesk, ServiceNow",      placeholder: "https://jira.yourcompany.com" },
+  analytics_base_url: { label: "Analytics", desc: "Google Analytics, Mixpanel, Amplitude",   placeholder: "https://analytics.yourcompany.com" },
+  calendar_base_url:  { label: "Calendar",  desc: "Google Calendar, Microsoft Outlook",      placeholder: "https://calendar.yourcompany.com" },
+  email_base_url:     { label: "Email",     desc: "SMTP gateway or SendGrid/Resend endpoint", placeholder: "https://email.yourcompany.com" },
+};
+
+function IntegrationsPanel({ apiBase }: { apiBase: string }) {
+  const [data, setData] = useState<Record<string, string>>({});
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editVal, setEditVal] = useState("");
+  const [saving, setSaving] = useState(false);
+  const [msg, setMsg] = useState<{ key: string; ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("workforce_token") : null;
+    fetch(`${apiBase}/api/v1/settings/integrations`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => {
+        if (!d) return;
+        const vals: Record<string, string> = {};
+        (d.integrations ?? []).forEach((i: { key: string; value: string }) => { vals[i.key] = i.value; });
+        setData(vals);
+      })
+      .catch(() => {});
+  }, [apiBase]);
+
+  async function save(key: string) {
+    setSaving(true);
+    const token = typeof window !== "undefined" ? localStorage.getItem("workforce_token") : null;
+    try {
+      const r = await fetch(`${apiBase}/api/v1/settings/integrations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ integrations: { [key]: editVal } }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setData((prev) => ({ ...prev, [key]: editVal }));
+      setEditing(null);
+      setMsg({ key, ok: true, text: "Saved" });
+      setTimeout(() => setMsg(null), 2500);
+    } catch {
+      setMsg({ key, ok: false, text: "Save failed — admin role required" });
+      setTimeout(() => setMsg(null), 3000);
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <p className="text-[11px] font-mono uppercase tracking-widest text-slate-600 mb-2">MCP Connector Base URLs</p>
+      {Object.entries(INTEGRATION_META).map(([key, meta]) => {
+        const current = data[key] || "";
+        const isEditing = editing === key;
+        return (
+          <div key={key} className="rounded-xl border border-[#1f2937] bg-[#0c111d] px-4 py-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <p className="text-sm font-medium text-slate-200">{meta.label}</p>
+                  {current && (
+                    <span className="inline-block rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] text-emerald-400">Connected</span>
+                  )}
+                </div>
+                <p className="text-xs text-slate-500">{meta.desc}</p>
+                {current && !isEditing && (
+                  <p className="mt-1 font-mono text-[11px] text-slate-400 truncate">{current}</p>
+                )}
+                {msg?.key === key && (
+                  <p className={`mt-1 text-xs ${msg.ok ? "text-emerald-400" : "text-red-400"}`}>{msg.text}</p>
+                )}
+              </div>
+              {!isEditing ? (
+                <button
+                  onClick={() => { setEditing(key); setEditVal(current); }}
+                  className="flex items-center gap-1.5 rounded-lg border border-[#1f2937] px-3 py-1.5 text-xs text-slate-400 hover:border-[#374151] hover:text-slate-200 transition-all whitespace-nowrap"
+                >
+                  {current ? "Edit" : "Configure"} <ChevronRight className="h-3 w-3" />
+                </button>
+              ) : (
+                <div className="flex gap-2 items-center min-w-0">
+                  <input
+                    autoFocus
+                    type="url"
+                    value={editVal}
+                    onChange={(e) => setEditVal(e.target.value)}
+                    placeholder={meta.placeholder}
+                    className="w-64 rounded-lg border border-[#374151] bg-[#070d1a] px-3 py-1.5 font-mono text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:border-amber-500"
+                    onKeyDown={(e) => { if (e.key === "Enter") save(key); if (e.key === "Escape") setEditing(null); }}
+                  />
+                  <button
+                    onClick={() => save(key)}
+                    disabled={saving}
+                    className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-medium text-black hover:bg-amber-400 disabled:opacity-50 whitespace-nowrap"
+                  >
+                    {saving ? "…" : "Save"}
+                  </button>
+                  <button onClick={() => setEditing(null)} className="text-slate-500 hover:text-slate-300 text-xs">Cancel</button>
+                </div>
+              )}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 /* ── Main page ───────────────────────────────────────────── */
 
 export default function SettingsPage() {
@@ -196,9 +312,9 @@ export default function SettingsPage() {
         }
       }
 
-      // Persist profile to API if changed
+      // Persist profile to API if changed (any authenticated user can update own profile)
       if (user && (fullName !== (user.full_name ?? "") || email !== (user.email ?? ""))) {
-        const res = await fetch(`${apiBase}/api/v1/users/${user.user_id}`, {
+        const res = await fetch(`${apiBase}/api/v1/auth/profile`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json", ...authHeaders() },
           body: JSON.stringify({
@@ -207,8 +323,8 @@ export default function SettingsPage() {
           }),
         });
         if (!res.ok) {
-          const detail = await res.json().catch(() => ({}));
-          throw new Error(detail?.detail ?? `API ${res.status}`);
+          // Non-fatal — keys were already saved; just log profile update failure
+          console.warn("Profile update failed:", res.status);
         }
       }
 
@@ -402,24 +518,7 @@ export default function SettingsPage() {
 
     integrations: (
       <div className="space-y-4">
-        {[
-          { name: "CRM",         desc: "Connect Salesforce, HubSpot, or Pipedrive",     status: "not_configured" },
-          { name: "HRIS",        desc: "Connect BambooHR, Workday, or Gusto",            status: "not_configured" },
-          { name: "ERP",         desc: "Connect SAP, Oracle, or NetSuite",               status: "not_configured" },
-          { name: "Ticketing",   desc: "Connect Jira, Zendesk, or ServiceNow",           status: "not_configured" },
-          { name: "Analytics",   desc: "Connect Google Analytics, Mixpanel, or Amplitude", status: "not_configured" },
-          { name: "Calendar",    desc: "Connect Google Calendar or Outlook",             status: "not_configured" },
-        ].map(({ name, desc, status }) => (
-          <div key={name} className="flex items-center justify-between rounded-xl border border-[#1f2937] bg-[#0c111d] px-4 py-3">
-            <div>
-              <p className="text-sm font-medium text-slate-200">{name}</p>
-              <p className="text-xs text-slate-500">{desc}</p>
-            </div>
-            <button className="flex items-center gap-1.5 rounded-lg border border-[#1f2937] px-3 py-1.5 text-xs text-slate-400 transition-all hover:border-[#374151] hover:text-slate-200">
-              Configure <ChevronRight className="h-3 w-3" />
-            </button>
-          </div>
-        ))}
+        <IntegrationsPanel apiBase={process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080"} />
       </div>
     ),
 

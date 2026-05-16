@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.db.crud import upsert_secret, get_all_secrets
 from app.models.schemas import Principal
-from app.security.auth import require_admin
+from app.security.auth import get_principal, require_admin
 from app.swarms.router import reload_agents
 
 router = APIRouter(prefix="/settings", tags=["settings"])
@@ -70,7 +70,7 @@ class SaveKeysRequest(BaseModel):
 @router.get("/keys")
 async def get_api_keys(
     db: AsyncSession = Depends(get_db),
-    _: Principal = Depends(require_admin),
+    _: Principal = Depends(get_principal),  # any authenticated user can see status (values are redacted)
 ) -> dict:
     """Return which keys are currently configured (values redacted)."""
     db_secrets = await get_all_secrets(db)
@@ -100,4 +100,76 @@ async def save_api_keys(
     # Bust agent cache so the new OPENAI_API_KEY is picked up on next chat
     if any(k in saved for k in ("openai_api_key", "anthropic_api_key")):
         reload_agents()
+    return {"saved": saved, "count": len(saved)}
+
+
+# ---------------------------------------------------------------------------
+# Integration base-URL configuration (MCP connector endpoints)
+# ---------------------------------------------------------------------------
+
+INTEGRATION_KEYS = {
+    "crm_base_url":        "CRM Base URL",
+    "hris_base_url":       "HRIS Base URL",
+    "finance_base_url":    "Finance / ERP Base URL",
+    "devops_base_url":     "DevOps / Ticketing Base URL",
+    "calendar_base_url":   "Calendar Service URL",
+    "email_base_url":      "Email Service URL",
+    "analytics_base_url":  "Analytics Service URL",
+    "knowledge_base_url":  "Knowledge Service URL",
+}
+
+INTEGRATION_ENV_MAP = {
+    "crm_base_url":       "CRM_BASE_URL",
+    "hris_base_url":      "HRIS_BASE_URL",
+    "finance_base_url":   "FINANCE_BASE_URL",
+    "devops_base_url":    "DEVOPS_BASE_URL",
+    "calendar_base_url":  "CALENDAR_BASE_URL",
+    "email_base_url":     "EMAIL_BASE_URL",
+    "analytics_base_url": "ANALYTICS_BASE_URL",
+    "knowledge_base_url": "KNOWLEDGE_BASE_URL",
+}
+
+
+class IntegrationEntry(BaseModel):
+    key: str
+    label: str
+    value: str
+    is_set: bool
+
+
+class SaveIntegrationsRequest(BaseModel):
+    integrations: dict[str, str]
+
+
+@router.get("/integrations")
+async def get_integrations(
+    db: AsyncSession = Depends(get_db),
+    _: Principal = Depends(get_principal),
+) -> dict:
+    """Return all integration base URLs (values shown — they are not secrets)."""
+    db_secrets = await get_all_secrets(db)
+    result = []
+    for k, label in INTEGRATION_KEYS.items():
+        env_key = INTEGRATION_ENV_MAP.get(k, k.upper())
+        value = db_secrets.get(k) or os.environ.get(env_key, "")
+        result.append({"key": k, "label": label, "value": value, "is_set": bool(value)})
+    return {"integrations": result}
+
+
+@router.post("/integrations")
+async def save_integrations(
+    body: SaveIntegrationsRequest,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_admin),
+) -> dict:
+    """Persist integration base URLs and apply to os.environ."""
+    saved = []
+    for k, v in body.integrations.items():
+        if k not in INTEGRATION_KEYS:
+            continue
+        await upsert_secret(db, key=k, value=v, label=INTEGRATION_KEYS[k], updated_by=principal.user_id)
+        env_key = INTEGRATION_ENV_MAP.get(k, k.upper())
+        if v:
+            os.environ[env_key] = v
+        saved.append(k)
     return {"saved": saved, "count": len(saved)}

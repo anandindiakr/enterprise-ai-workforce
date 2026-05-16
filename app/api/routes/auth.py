@@ -165,6 +165,25 @@ async def change_password(
 
 # ── User management (admin) ───────────────────────────────────────────────────
 
+@router.patch("/profile", response_model=UserResponse, summary="Update own profile")
+async def update_own_profile(
+    payload: UpdateUserRequest,
+    principal: Principal = Depends(get_principal),
+    db: AsyncSession = Depends(get_db),
+) -> UserResponse:
+    """Any authenticated user can update their own full_name and email."""
+    user = await crud.get_user_by_username(db, principal.user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user = await crud.update_user(
+        db, user,
+        full_name=payload.full_name,
+        email=payload.email,
+    )
+    await db.commit()
+    return UserResponse.model_validate(user)
+
+
 @users_router.get("/", response_model=list[UserResponse])
 async def list_users(
     skip: int = 0,

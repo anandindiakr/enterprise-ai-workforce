@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import { BookOpen, Upload, Trash2, Search, RefreshCw, FileText } from "lucide-react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
+import { getToken } from "@/lib/auth";
 
 interface KBDocument {
   id: string;
@@ -14,7 +15,13 @@ interface KBDocument {
   created_at: string;
 }
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+// Always use the env var — default to port 8080 (not 8000)
+const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+
+function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
 function formatBytes(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -24,12 +31,12 @@ function formatBytes(bytes: number) {
 
 function statusBadge(status: string) {
   const map: Record<string, string> = {
-    pending:    "bg-yellow-100 text-yellow-700",
-    processing: "bg-blue-100 text-blue-700",
-    indexed:    "bg-green-100 text-green-700",
-    error:      "bg-red-100 text-red-700",
+    pending:    "bg-yellow-500/20 text-yellow-400",
+    processing: "bg-blue-500/20 text-blue-400",
+    indexed:    "bg-emerald-500/20 text-emerald-400",
+    error:      "bg-red-500/20 text-red-400",
   };
-  return `px-2 py-0.5 rounded text-xs font-medium ${map[status] ?? "bg-gray-100 text-gray-600"}`;
+  return `px-2 py-0.5 rounded text-xs font-medium ${map[status] ?? "bg-slate-700 text-slate-400"}`;
 }
 
 export default function KnowledgeBasePage() {
@@ -48,19 +55,27 @@ export default function KnowledgeBasePage() {
   const fetchDocs = useCallback(async () => {
     setLoading(true);
     setError("");
-    const token = localStorage.getItem("token");
     const params = new URLSearchParams({ limit: "50" });
     if (category) params.set("category", category);
     try {
+      const controller = new AbortController();
+      const tid = setTimeout(() => controller.abort(), 10000); // 10 s timeout
       const res = await fetch(`${API}/api/v1/knowledge?${params}`, {
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: authHeaders(),
+        signal: controller.signal,
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      clearTimeout(tid);
+      if (!res.ok) throw new Error(`API error ${res.status}`);
       const data = await res.json();
       setDocs(data.documents ?? []);
       setTotal(data.total ?? 0);
     } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to load documents");
+      if (e instanceof Error && e.name === "AbortError") {
+        setError("Request timed out — is the API running on port 8080?");
+      } else {
+        setError(e instanceof Error ? e.message : "Failed to load documents");
+      }
+      setDocs([]);
     } finally {
       setLoading(false);
     }
@@ -73,7 +88,6 @@ export default function KnowledgeBasePage() {
     if (!file) return;
     setUploading(true);
     setUploadMsg("");
-    const token = localStorage.getItem("token");
     const form = new FormData();
     form.append("file", file);
     form.append("title", uploadTitle || file.name);
@@ -81,7 +95,7 @@ export default function KnowledgeBasePage() {
     try {
       const res = await fetch(`${API}/api/v1/knowledge/upload`, {
         method: "POST",
-        headers: token ? { Authorization: `Bearer ${token}` } : {},
+        headers: authHeaders(),
         body: form,
       });
       const data = await res.json();
@@ -99,10 +113,9 @@ export default function KnowledgeBasePage() {
 
   async function handleDelete(id: string) {
     if (!confirm("Delete this document?")) return;
-    const token = localStorage.getItem("token");
     await fetch(`${API}/api/v1/knowledge/${id}`, {
       method: "DELETE",
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: authHeaders(),
     });
     fetchDocs();
   }
@@ -116,37 +129,38 @@ export default function KnowledgeBasePage() {
 
   return (
     <ErrorBoundary>
-      <div className="p-6 max-w-6xl mx-auto">
+      <div className="p-6 max-w-6xl mx-auto text-slate-100">
+        {/* Header */}
         <div className="mb-6 flex items-center gap-3">
-          <BookOpen className="h-7 w-7 text-violet-500" />
+          <BookOpen className="h-7 w-7 text-violet-400" />
           <div>
-            <h1 className="text-2xl font-bold text-gray-900">Knowledge Base</h1>
-            <p className="text-sm text-gray-500 mt-0.5">{total} documents — agents use these during conversations</p>
+            <h1 className="text-2xl font-bold text-white">Knowledge Base</h1>
+            <p className="text-sm text-slate-400 mt-0.5">{total} document{total !== 1 ? "s" : ""} — agents use these during conversations</p>
           </div>
         </div>
 
         {/* Upload card */}
-        <div className="mb-6 rounded-xl border border-dashed border-violet-300 bg-violet-50 p-5">
-          <h2 className="text-sm font-semibold text-violet-700 mb-3 flex items-center gap-2">
+        <div className="mb-6 rounded-xl border border-violet-500/30 bg-violet-500/5 p-5">
+          <h2 className="text-sm font-semibold text-violet-300 mb-3 flex items-center gap-2">
             <Upload className="h-4 w-4" /> Upload Document
           </h2>
           <div className="flex flex-wrap gap-3 items-end">
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-600">Title (optional)</label>
+              <label className="text-xs text-slate-400">Title (optional)</label>
               <input
                 type="text"
                 value={uploadTitle}
                 onChange={(e) => setUploadTitle(e.target.value)}
                 placeholder="e.g. Sales Playbook Q3"
-                className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm w-48"
+                className="px-3 py-1.5 rounded-lg border border-slate-600 bg-slate-800 text-sm text-slate-200 w-48 focus:outline-none focus:ring-2 focus:ring-violet-500"
               />
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-600">Category</label>
+              <label className="text-xs text-slate-400">Category</label>
               <select
                 value={uploadCategory}
                 onChange={(e) => setUploadCategory(e.target.value)}
-                className="px-3 py-1.5 rounded-lg border border-gray-300 text-sm"
+                className="px-3 py-1.5 rounded-lg border border-slate-600 bg-slate-800 text-sm text-slate-200"
               >
                 {["General", "HR", "Sales", "Finance", "IT", "Marketing", "Support"].map((c) => (
                   <option key={c}>{c}</option>
@@ -154,19 +168,24 @@ export default function KnowledgeBasePage() {
               </select>
             </div>
             <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-600">File</label>
-              <input ref={fileRef} type="file" accept=".txt,.md,.pdf,.docx,.csv,.json" className="text-sm" />
+              <label className="text-xs text-slate-400">File (.txt .md .pdf .docx .csv .json)</label>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".txt,.md,.pdf,.docx,.csv,.json"
+                className="text-sm text-slate-300 file:mr-3 file:px-3 file:py-1.5 file:rounded-lg file:border-0 file:bg-violet-600 file:text-white file:text-xs file:cursor-pointer"
+              />
             </div>
             <button
               onClick={handleUpload}
               disabled={uploading}
-              className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:opacity-50"
+              className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:opacity-50 transition-colors"
             >
               {uploading ? "Uploading…" : "Upload"}
             </button>
           </div>
           {uploadMsg && (
-            <p className={`mt-2 text-sm ${uploadMsg.startsWith("Error") ? "text-red-600" : "text-green-700"}`}>
+            <p className={`mt-2 text-sm ${uploadMsg.startsWith("Error") ? "text-red-400" : "text-emerald-400"}`}>
               {uploadMsg}
             </p>
           )}
@@ -175,19 +194,19 @@ export default function KnowledgeBasePage() {
         {/* Filter bar */}
         <div className="flex flex-wrap gap-3 mb-4">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-500" />
             <input
               type="text"
               placeholder="Search documents…"
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              className="pl-9 pr-3 py-2 rounded-lg border border-gray-300 text-sm focus:outline-none focus:ring-2 focus:ring-violet-500 w-52"
+              className="pl-9 pr-3 py-2 rounded-lg border border-slate-600 bg-slate-800 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-violet-500 w-52"
             />
           </div>
           <select
             value={category}
             onChange={(e) => setCategory(e.target.value)}
-            className="px-3 py-2 rounded-lg border border-gray-300 text-sm"
+            className="px-3 py-2 rounded-lg border border-slate-600 bg-slate-800 text-sm text-slate-200"
           >
             <option value="">All categories</option>
             {["HR", "Sales", "Finance", "IT", "Marketing", "Support", "General"].map((c) => (
@@ -196,30 +215,31 @@ export default function KnowledgeBasePage() {
           </select>
           <button
             onClick={fetchDocs}
-            className="p-2 rounded-lg border border-gray-300 text-gray-500 hover:bg-gray-50"
+            className="p-2 rounded-lg border border-slate-600 bg-slate-800 text-slate-400 hover:bg-slate-700 transition-colors"
+            title="Refresh"
           >
             <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
           </button>
         </div>
 
         {error && (
-          <div className="mb-4 p-3 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">{error}</div>
+          <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-sm">{error}</div>
         )}
 
         {/* Document grid */}
         {loading ? (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
             {Array.from({ length: 6 }).map((_, i) => (
-              <div key={i} className="rounded-xl border border-gray-200 p-4 animate-pulse">
-                <div className="h-5 bg-gray-100 rounded w-3/4 mb-2" />
-                <div className="h-3 bg-gray-100 rounded w-1/2" />
+              <div key={i} className="rounded-xl border border-slate-700 bg-slate-800 p-4 animate-pulse">
+                <div className="h-5 bg-slate-700 rounded w-3/4 mb-2" />
+                <div className="h-3 bg-slate-700 rounded w-1/2" />
               </div>
             ))}
           </div>
         ) : filtered.length === 0 ? (
-          <div className="flex flex-col items-center justify-center py-20 text-gray-400">
+          <div className="flex flex-col items-center justify-center py-20 text-slate-500">
             <BookOpen className="h-12 w-12 mb-3 opacity-30" />
-            <p className="font-medium">No documents yet</p>
+            <p className="font-medium text-slate-400">No documents yet</p>
             <p className="text-sm mt-1">Upload your first document above</p>
           </div>
         ) : (
@@ -227,28 +247,29 @@ export default function KnowledgeBasePage() {
             {filtered.map((doc) => (
               <div
                 key={doc.id}
-                className="rounded-xl border border-gray-200 bg-white p-4 shadow-sm hover:shadow-md transition-shadow group"
+                className="rounded-xl border border-slate-700 bg-slate-800 p-4 hover:border-violet-500/50 transition-colors group"
               >
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <div className="flex items-center gap-2 min-w-0">
                     <FileText className="h-5 w-5 text-violet-400 flex-shrink-0" />
-                    <h3 className="font-medium text-gray-900 text-sm truncate">{doc.title}</h3>
+                    <h3 className="font-medium text-slate-100 text-sm truncate">{doc.title}</h3>
                   </div>
                   <button
                     onClick={() => handleDelete(doc.id)}
-                    className="opacity-0 group-hover:opacity-100 text-gray-400 hover:text-red-500 transition-all flex-shrink-0"
+                    className="opacity-0 group-hover:opacity-100 text-slate-500 hover:text-red-400 transition-all flex-shrink-0"
+                    title="Delete"
                   >
                     <Trash2 className="h-4 w-4" />
                   </button>
                 </div>
-                <div className="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+                <div className="flex flex-wrap items-center gap-2 text-xs text-slate-400">
                   {doc.category && (
-                    <span className="px-2 py-0.5 rounded bg-gray-100 text-gray-600">{doc.category}</span>
+                    <span className="px-2 py-0.5 rounded bg-slate-700 text-slate-300">{doc.category}</span>
                   )}
                   <span className={statusBadge(doc.embedding_status)}>{doc.embedding_status}</span>
                   {doc.file_size > 0 && <span>{formatBytes(doc.file_size)}</span>}
                 </div>
-                <p className="text-xs text-gray-400 mt-2">
+                <p className="text-xs text-slate-500 mt-2">
                   {new Date(doc.created_at).toLocaleDateString()}
                   {doc.file_name && ` · ${doc.file_name}`}
                 </p>
