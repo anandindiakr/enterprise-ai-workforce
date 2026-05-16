@@ -19,6 +19,7 @@ import {
   ChevronLeft,
   Info,
   Zap,
+  Download,
 } from "lucide-react";
 import { formatTime } from "@/lib/utils";
 
@@ -428,6 +429,25 @@ export default function ChatPage() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            <button
+              onClick={() => {
+                const txt = messages
+                  .map((m) => `[${m.timestamp.toISOString()}] ${m.role.toUpperCase()}: ${m.content}`)
+                  .join("\n\n");
+                const blob = new Blob([txt], { type: "text/plain" });
+                const url  = URL.createObjectURL(blob);
+                const a    = document.createElement("a");
+                a.href     = url;
+                a.download = `conversation-${deptId}-${new Date().toISOString().slice(0,10)}.txt`;
+                a.click();
+                URL.revokeObjectURL(url);
+              }}
+              disabled={messages.length === 0}
+              title="Export conversation"
+              className="flex items-center gap-1.5 rounded-lg border border-[#1f2937] px-3 py-1.5 text-xs text-slate-400 transition-colors hover:border-emerald-500/30 hover:text-emerald-400 disabled:opacity-30"
+            >
+              <Download className="h-3 w-3" /> Export
+            </button>
             <Link
               href={`/voice?dept=${deptId}`}
               className="flex items-center gap-1.5 rounded-lg border border-[#1f2937] bg-[#111827] px-3 py-1.5 text-xs text-slate-400 transition-all hover:border-[#374151] hover:text-slate-200"

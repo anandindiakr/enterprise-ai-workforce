@@ -1,0 +1,43 @@
+# ── Namespace ──────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: ai-workforce
+  labels:
+    app.kubernetes.io/name: ai-workforce
+
+---
+# ── ConfigMap ─────────────────────────────────────────────────────────────────
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ai-workforce-config
+  namespace: ai-workforce
+data:
+  APP_ENV: "production"
+  REDIS_URL: "redis://redis-service:6379/0"
+  CHROMA_HOST: "chroma-service"
+  CHROMA_PORT: "8000"
+  POSTGRES_DSN: "postgresql+asyncpg://workforce:workforce@postgres-service:5432/workforce"
+  CORS_ORIGINS: "https://workforce.yourdomain.com"
+
+---
+# ── Secret (fill in before applying) ─────────────────────────────────────────
+apiVersion: v1
+kind: Secret
+metadata:
+  name: ai-workforce-secrets
+  namespace: ai-workforce
+type: Opaque
+stringData:
+  SECRET_KEY: "change-me-in-production"
+  OPENAI_API_KEY: ""
+  ANTHROPIC_API_KEY: ""
+  DEEPGRAM_API_KEY: ""
+  ELEVENLABS_API_KEY: ""
+  TWILIO_ACCOUNT_SID: ""
+  TWILIO_AUTH_TOKEN: ""
+  LIVEKIT_API_KEY: ""
+  LIVEKIT_API_SECRET: ""
+  POSTGRES_USER: "workforce"
+  POSTGRES_PASSWORD: "workforce"
