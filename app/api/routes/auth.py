@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from app.models.schemas import Principal, TokenRequest, TokenResponse
-from app.security.auth import create_access_token
+from app.security.auth import create_access_token, get_principal
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 
@@ -35,5 +35,5 @@ async def issue_token(payload: TokenRequest) -> TokenResponse:
 
 
 @router.get("/me", response_model=Principal)
-async def me(principal: Principal) -> Principal:  # populated by dependency in main
+async def me(principal: Principal = Depends(get_principal)) -> Principal:
     return principal
