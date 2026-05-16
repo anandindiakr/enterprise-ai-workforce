@@ -55,9 +55,12 @@ interface HRSummary {
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function mcpCall(endpoint: string, method: string, args = {}) {
-  const res = await fetch(`${API}/mcp/${endpoint}`, {
+  const token = getToken();
+  const headers: Record<string, string> = { "Content-Type": "application/json" };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+  const res = await fetch(`${API}/api/v1/mcp/${endpoint}`, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name: method, arguments: args } }),
   });
   const data = await res.json();

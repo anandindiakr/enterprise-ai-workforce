@@ -96,6 +96,7 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [serverKeyStatus, setServerKeyStatus] = useState<Record<string, boolean>>({});
 
   /* Profile state */
   const [fullName, setFullName] = useState("");
@@ -145,23 +146,58 @@ export default function SettingsPage() {
       if (typeof saved.soundNotif    === "boolean") setSoundNotif(saved.soundNotif);
       if (saved.language) setLanguage(saved.language);
     } catch {}
+    // Fetch server-side key status
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+    fetch(`${apiBase}/api/v1/settings/keys`, { headers: authHeaders() })
+      .then((r) => r.ok ? r.json() : null)
+      .then((data) => {
+        if (!data) return;
+        const status: Record<string, boolean> = {};
+        (data.keys ?? []).forEach((k: { key: string; is_set: boolean }) => { status[k.key] = k.is_set; });
+        setServerKeyStatus(status);
+      })
+      .catch(() => {});
   }, []);
 
   async function handleSave() {
     setSaving(true);
     setError(null);
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
     try {
       // Save non-secret settings to localStorage
-      const settings = {
+      const localSettings = {
         openaiKey, elevenLabsKey, deepgramKey, twilioSid,
         streamingChat, autoScroll, debugMode,
         emailNotif, browserNotif, soundNotif, language,
       };
-      localStorage.setItem("ai_workforce_settings", JSON.stringify(settings));
+      localStorage.setItem("ai_workforce_settings", JSON.stringify(localSettings));
+
+      // POST API keys to backend (they get applied to os.environ immediately)
+      const keysPayload: Record<string, string> = {};
+      if (openaiKey)     keysPayload["openai_api_key"]     = openaiKey;
+      if (elevenLabsKey) keysPayload["elevenlabs_api_key"] = elevenLabsKey;
+      if (deepgramKey)   keysPayload["deepgram_api_key"]   = deepgramKey;
+      if (twilioSid)     keysPayload["twilio_account_sid"] = twilioSid;
+      if (twilioToken)   keysPayload["twilio_auth_token"]  = twilioToken;
+      if (Object.keys(keysPayload).length > 0) {
+        const kr = await fetch(`${apiBase}/api/v1/settings/keys`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json", ...authHeaders() },
+          body: JSON.stringify({ keys: keysPayload }),
+        });
+        if (kr.ok) {
+          // Refresh server key status
+          const statusData = await fetch(`${apiBase}/api/v1/settings/keys`, { headers: authHeaders() }).then((r) => r.json()).catch(() => null);
+          if (statusData) {
+            const status: Record<string, boolean> = {};
+            (statusData.keys ?? []).forEach((k: { key: string; is_set: boolean }) => { status[k.key] = k.is_set; });
+            setServerKeyStatus(status);
+          }
+        }
+      }
 
       // Persist profile to API if changed
       if (user && (fullName !== (user.full_name ?? "") || email !== (user.email ?? ""))) {
-        const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
         const res = await fetch(`${apiBase}/api/v1/users/${user.user_id}`, {
           method: "PATCH",
           headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -249,17 +285,32 @@ export default function SettingsPage() {
         <FieldGroup label="AI Providers">
           <div className="rounded-xl border border-[#1f2937] bg-[#0c111d] p-4 space-y-4">
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-300">OpenAI API Key</label>
+              <label className="mb-1.5 block text-xs font-medium text-slate-300">
+                OpenAI API Key
+                {serverKeyStatus["openai_api_key"] && (
+                  <span className="ml-2 inline-block rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] text-emerald-400">Active on server</span>
+                )}
+              </label>
               <SecretField value={openaiKey} onChange={setOpenaiKey} placeholder="sk-..." />
               <p className="mt-1 text-[10px] text-slate-600">Powers all chat and agent intelligence</p>
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-300">ElevenLabs API Key</label>
+              <label className="mb-1.5 block text-xs font-medium text-slate-300">
+                ElevenLabs API Key
+                {serverKeyStatus["elevenlabs_api_key"] && (
+                  <span className="ml-2 inline-block rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] text-emerald-400">Active on server</span>
+                )}
+              </label>
               <SecretField value={elevenLabsKey} onChange={setElevenLabsKey} placeholder="xi-..." />
               <p className="mt-1 text-[10px] text-slate-600">Text-to-Speech for voice agents</p>
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-300">Deepgram API Key</label>
+              <label className="mb-1.5 block text-xs font-medium text-slate-300">
+                Deepgram API Key
+                {serverKeyStatus["deepgram_api_key"] && (
+                  <span className="ml-2 inline-block rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] text-emerald-400">Active on server</span>
+                )}
+              </label>
               <SecretField value={deepgramKey} onChange={setDeepgramKey} placeholder="Token..." />
               <p className="mt-1 text-[10px] text-slate-600">Speech-to-Text transcription</p>
             </div>
@@ -268,19 +319,30 @@ export default function SettingsPage() {
         <FieldGroup label="Communication Providers">
           <div className="rounded-xl border border-[#1f2937] bg-[#0c111d] p-4 space-y-4">
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-300">Twilio Account SID</label>
+              <label className="mb-1.5 block text-xs font-medium text-slate-300">
+                Twilio Account SID
+                {serverKeyStatus["twilio_account_sid"] && (
+                  <span className="ml-2 inline-block rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] text-emerald-400">Active on server</span>
+                )}
+              </label>
               <SecretField value={twilioSid} onChange={setTwilioSid} placeholder="AC..." />
             </div>
             <div>
-              <label className="mb-1.5 block text-xs font-medium text-slate-300">Twilio Auth Token</label>
+              <label className="mb-1.5 block text-xs font-medium text-slate-300">
+                Twilio Auth Token
+                {serverKeyStatus["twilio_auth_token"] && (
+                  <span className="ml-2 inline-block rounded-full bg-emerald-500/20 px-2 py-0.5 text-[10px] text-emerald-400">Active on server</span>
+                )}
+              </label>
               <SecretField value={twilioToken} onChange={setTwilioToken} placeholder="Auth token..." />
               <p className="mt-1 text-[10px] text-slate-600">Required for phone call inbound/outbound</p>
             </div>
           </div>
         </FieldGroup>
-        <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-3">
-          <p className="text-[11px] text-amber-400/80">
-            API keys are stored locally in your browser. For production, configure them via the backend <code className="font-mono text-amber-300">.env</code> file.
+        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/5 p-3">
+          <p className="text-[11px] text-emerald-400/80">
+            API keys are encrypted and saved to the server. They take effect immediately — no restart needed.
+            Keys already active on the server are marked <strong>Active on server</strong>.
           </p>
         </div>
       </div>

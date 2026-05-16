@@ -171,3 +171,11 @@ def workforce_router() -> WorkforceRouter:
     if _router is None:
         _router = WorkforceRouter()
     return _router
+
+
+def reload_agents() -> None:
+    """Invalidate cached agents (call after new API keys are saved)."""
+    global _router
+    if _router is not None:
+        _router._department_agents = None
+    logger.info("Agent cache cleared — will rebuild on next request.")

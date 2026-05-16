@@ -141,6 +141,23 @@ class AuditLogModel(Base):
     )
 
 
+class PlatformSecretModel(Base):
+    """Stores runtime API keys / secrets saved through the Settings UI."""
+
+    __tablename__ = "platform_secrets"
+
+    key: Mapped[str] = mapped_column(String(128), primary_key=True)
+    value: Mapped[str] = mapped_column(Text, nullable=False)
+    label: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    updated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
 class KnowledgeDocumentModel(Base):
     __tablename__ = "knowledge_documents"
 

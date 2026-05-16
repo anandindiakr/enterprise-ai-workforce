@@ -71,25 +71,19 @@ def _make_mcp_tool(connector_name: str) -> Callable[..., Any]:
 
 
 def _build_agent(profile: AgentProfile, *, system_prompt: str | None = None) -> Agent:
-    # Only attach MCP tools for connectors that are actually configured.
-    # When tools are registered on a Swarms Agent, the LLM is expected to respond
-    # with tool calls.  If all connectors are unconfigured (no URL) the model will
-    # respond with plain text, which Swarms' tool-execution path returns as None.
-    reg = mcp_registry()
-    tools: list[Callable[..., Any]] = [
-        _make_mcp_tool(name)
-        for name in profile.mcp_connectors
-        if (conn := reg.get(name)) is not None and conn.is_configured
-    ]
-
+    # NOTE: We deliberately do NOT attach MCP tools as OpenAI function-calling
+    # tools because Swarms 9.x returns None when the model responds with plain
+    # text while tools are registered (known issue with tool-execution path).
+    # MCP tool calls are instead dispatched by the chat service post-processing
+    # step, keeping the agent focused on language generation.
     agent = Agent(
         agent_name=profile.agent_name,
         agent_description=profile.description,
         system_prompt=system_prompt or render_system_prompt(profile),
         model_name=profile.model,
-        max_loops=profile.max_loops,
+        max_loops=1,  # force single loop to avoid empty-loop hangs
         temperature=profile.temperature,
-        tools=tools or None,
+        tools=None,
         dynamic_temperature_enabled=False,
         retry_attempts=2,
         autosave=False,

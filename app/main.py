@@ -20,7 +20,9 @@ from app.api.routes import voice as voice_routes
 from app.api.routes.escalations import router as escalations_router
 from app.api.routes.knowledge import router as knowledge_router
 from app.api.routes.audit import router as audit_router
+from app.api.routes.settings import router as settings_router
 from app.api.ws import chat_ws, voice_ws
+from app.services.secrets_service import load_secrets_to_env
 from app.core.config import settings
 from app.core.exceptions import WorkforceError
 from app.core.logging import configure_logging, logger
@@ -77,6 +79,11 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     long_term_memory().connect()
     await mcp_registry().initialize_all()
 
+    # Load any DB-saved API keys into os.environ (supplements .env / Docker envs)
+    from app.db.session import AsyncSessionLocal
+    async with AsyncSessionLocal() as _db:
+        await load_secrets_to_env(_db)
+
     try:
         yield
     finally:
@@ -128,6 +135,7 @@ def create_app() -> FastAPI:
     app.include_router(escalations_router, prefix=api_v1)
     app.include_router(knowledge_router, prefix=api_v1)
     app.include_router(audit_router, prefix=api_v1)
+    app.include_router(settings_router, prefix=api_v1)
     app.include_router(chat_ws.router, prefix=api_v1)
     app.include_router(voice_ws.router, prefix=api_v1)
 

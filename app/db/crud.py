@@ -16,6 +16,7 @@ from app.db.models import (
     EscalationModel,
     AuditLogModel,
     KnowledgeDocumentModel,
+    PlatformSecretModel,
 )
 
 
@@ -450,3 +451,35 @@ async def list_knowledge_documents(
     q = q.order_by(KnowledgeDocumentModel.created_at.desc()).offset(skip).limit(limit)
     result = await db.execute(q)
     return list(result.scalars().all())
+
+# ---------------------------------------------------------------------------
+# Platform secrets (runtime API keys stored via Settings UI)
+# ---------------------------------------------------------------------------
+
+async def upsert_secret(
+    db: AsyncSession,
+    key: str,
+    value: str,
+    label: str | None = None,
+    updated_by: str | None = None,
+) -> None:
+    existing = await db.get(PlatformSecretModel, key)
+    if existing:
+        existing.value = value
+        if label:
+            existing.label = label
+        if updated_by:
+            existing.updated_by = updated_by
+    else:
+        db.add(PlatformSecretModel(key=key, value=value, label=label, updated_by=updated_by))
+    await db.commit()
+
+
+async def get_secret(db: AsyncSession, key: str) -> str | None:
+    row = await db.get(PlatformSecretModel, key)
+    return row.value if row else None
+
+
+async def get_all_secrets(db: AsyncSession) -> dict[str, str]:
+    result = await db.execute(select(PlatformSecretModel))
+    return {row.key: row.value for row in result.scalars().all()}
