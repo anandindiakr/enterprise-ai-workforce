@@ -21,13 +21,13 @@ async def init_db() -> None:
                 db,
                 username="admin",
                 email="admin@workforce.local",
-                password="admin",
+                password="admin123",
                 full_name="Platform Admin",
                 roles=["admin", "agent"],
-                scopes=["chat", "voice", "workflows"],
+                scopes=["chat", "voice", "workflows", "audit"],
                 is_superuser=True,
             )
-            logger.info("Seeded default admin user (admin/admin).")
+            logger.info("Seeded default admin user (admin/admin123).")
 
         # Seed demo agent user
         if not await get_user_by_username(db, "agent"):

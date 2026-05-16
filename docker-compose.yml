@@ -12,12 +12,52 @@ services:
       CHROMA_HOST: chroma
       CHROMA_PORT: "8000"
       POSTGRES_DSN: postgresql+asyncpg://workforce:workforce@postgres:5432/workforce
+      MCP_BASE_URL: http://ai-workforce-api:8000
     depends_on:
       - redis
       - chroma
       - postgres
     ports:
       - "8080:8000"
+    restart: unless-stopped
+
+  # ── Celery worker ──────────────────────────────────────────────────────────
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-workforce/api:latest
+    container_name: ai-workforce-worker
+    command: celery -A app.workers.celery_app worker --loglevel=info --concurrency=4
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      CHROMA_HOST: chroma
+      CHROMA_PORT: "8000"
+      POSTGRES_DSN: postgresql+asyncpg://workforce:workforce@postgres:5432/workforce
+      MCP_BASE_URL: http://ai-workforce-api:8000
+    depends_on:
+      - redis
+      - api
+    restart: unless-stopped
+
+  # ── Celery beat (periodic tasks) ───────────────────────────────────────────
+  beat:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: ai-workforce/api:latest
+    container_name: ai-workforce-beat
+    command: celery -A app.workers.celery_app beat --loglevel=info
+    env_file:
+      - .env
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      POSTGRES_DSN: postgresql+asyncpg://workforce:workforce@postgres:5432/workforce
+    depends_on:
+      - redis
+      - worker
     restart: unless-stopped
 
   redis:

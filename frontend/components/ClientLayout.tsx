@@ -7,6 +7,7 @@
 
 import { AuthGuard, useIsSidebarVisible } from "@/components/AuthGuard";
 import { Sidebar } from "@/components/Sidebar";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 
 export function ClientLayout({ children }: { children: React.ReactNode }) {
   const showSidebar = useIsSidebarVisible();
@@ -21,7 +22,7 @@ export function ClientLayout({ children }: { children: React.ReactNode }) {
             : "flex-1 overflow-y-auto"
         }
       >
-        {children}
+        <ErrorBoundary>{children}</ErrorBoundary>
       </main>
     </AuthGuard>
   );

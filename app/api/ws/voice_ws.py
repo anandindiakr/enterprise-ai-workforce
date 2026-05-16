@@ -32,6 +32,8 @@ from typing import Final
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from app.core.logging import logger
+from app.core.exceptions import AuthenticationError
+from app.security.auth import decode_token
 from app.voice.vad import EnergyVAD, mulaw_to_pcm16
 from app.voice.session import voice_session_manager
 from app.models.schemas import ChatRequest
@@ -49,6 +51,22 @@ _MAX_BUFFER_BYTES:   Final[int]   = 16_000 * 2 * 8  # 8 s PCM16 @ 16 kHz
 
 @router.websocket("/ws/voice/{session_id}")
 async def voice_socket(ws: WebSocket, session_id: str) -> None:
+    # ── JWT auth via ?token= query param ──────────────────────────────────
+    token = ws.query_params.get("token")
+    if token:
+        try:
+            decode_token(token)
+        except AuthenticationError as exc:
+            await ws.close(code=4001)
+            logger.warning("Voice WS auth rejected session={}: {}", session_id, exc)
+            return
+    # Allow unauthenticated connections in dev/staging (token optional);
+    # set REQUIRE_WS_AUTH=true in production to harden.
+    import os
+    if not token and os.getenv("REQUIRE_WS_AUTH", "").lower() == "true":
+        await ws.close(code=4001)
+        return
+
     await ws.accept()
 
     session = voice_session_manager().get(session_id)

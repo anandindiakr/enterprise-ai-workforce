@@ -17,6 +17,9 @@ from app.api.routes import auth as auth_routes
 from app.api.routes import chat as chat_routes
 from app.api.routes import platform as platform_routes
 from app.api.routes import voice as voice_routes
+from app.api.routes.escalations import router as escalations_router
+from app.api.routes.knowledge import router as knowledge_router
+from app.api.routes.audit import router as audit_router
 from app.api.ws import chat_ws, voice_ws
 from app.core.config import settings
 from app.core.exceptions import WorkforceError
@@ -26,6 +29,9 @@ from app.mcp.mock_crm_server import router as crm_mcp_router
 from app.mcp.mock_hris_server import router as hris_mcp_router
 from app.mcp.mock_finance_server import router as finance_mcp_router
 from app.mcp.mock_devops_server import router as devops_mcp_router
+from app.mcp.mock_knowledge_server import router as knowledge_mcp_router
+from app.mcp.mock_calendar_server import router as calendar_mcp_router
+from app.mcp.mock_email_server import router as email_mcp_router
 from app.memory.long_term import long_term_memory
 from app.memory.short_term import short_term_memory
 from app.telemetry.tracing import init_tracing
@@ -119,14 +125,20 @@ def create_app() -> FastAPI:
     app.include_router(chat_routes.router, prefix=api_v1)
     app.include_router(voice_routes.router, prefix=api_v1)
     app.include_router(platform_routes.router, prefix=api_v1)
+    app.include_router(escalations_router, prefix=api_v1)
+    app.include_router(knowledge_router, prefix=api_v1)
+    app.include_router(audit_router, prefix=api_v1)
     app.include_router(chat_ws.router, prefix=api_v1)
     app.include_router(voice_ws.router, prefix=api_v1)
 
-    # Built-in MCP servers (CRM / HRIS / Finance / DevOps)
+    # Built-in MCP servers (all departments)
     app.include_router(crm_mcp_router)
     app.include_router(hris_mcp_router)
     app.include_router(finance_mcp_router)
     app.include_router(devops_mcp_router)
+    app.include_router(knowledge_mcp_router)
+    app.include_router(calendar_mcp_router)
+    app.include_router(email_mcp_router)
 
     @app.get("/")
     async def root() -> dict:

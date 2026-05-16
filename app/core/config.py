@@ -79,22 +79,38 @@ class AppSettings(BaseSettings):
     voice_realtime_provider: str = "openai_realtime"
 
     # --- MCP integrations ---
-    mcp_crm_url: str = ""
+    # Defaults point to the built-in mock servers (self-referencing on same app)
+    mcp_base_url: str = "http://localhost:8000"  # internal URL (docker: http://api:8000)
+    mcp_crm_url: str = ""         # overrides mcp_base_url/mcp/crm if set
     mcp_crm_token: str = ""
-    mcp_hris_url: str = ""
+    mcp_hris_url: str = ""        # overrides mcp_base_url/mcp/hris if set
     mcp_hris_token: str = ""
-    mcp_erp_url: str = ""
+    mcp_erp_url: str = ""         # overrides mcp_base_url/mcp/finance if set
     mcp_erp_token: str = ""
-    mcp_ticketing_url: str = ""
+    mcp_ticketing_url: str = ""   # overrides mcp_base_url/mcp/devops if set
     mcp_ticketing_token: str = ""
-    mcp_knowledge_url: str = ""
+    mcp_knowledge_url: str = ""   # overrides mcp_base_url/mcp/knowledge if set
     mcp_knowledge_token: str = ""
-    mcp_calendar_url: str = ""
+    mcp_calendar_url: str = ""    # overrides mcp_base_url/mcp/calendar if set
     mcp_calendar_token: str = ""
-    mcp_email_url: str = ""
+    mcp_email_url: str = ""       # overrides mcp_base_url/mcp/email if set
     mcp_email_token: str = ""
-    mcp_analytics_url: str = ""
+    mcp_analytics_url: str = ""   # overrides mcp_base_url/mcp/analytics if set
     mcp_analytics_token: str = ""
+
+    # --- Email / notifications ---
+    smtp_host: str = ""
+    smtp_port: int = 587
+    smtp_user: str = ""
+    smtp_password: str = ""
+    smtp_from: str = "noreply@ai-workforce.io"
+    email_from: str = "noreply@ai-workforce.io"
+    resend_api_key: str = ""      # alternative to SMTP
+    escalation_email_to: str = ""  # on-call team address for escalation alerts
+
+    # --- File upload ---
+    upload_dir: str = "/tmp/ai_workforce_uploads"
+    max_upload_size_mb: int = 20
 
     # --- Telemetry ---
     otel_exporter_otlp_endpoint: str = "http://localhost:4317"

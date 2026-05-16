@@ -23,6 +23,8 @@ import {
   Settings,
   BarChart3,
   AlertTriangle,
+  ClipboardList,
+  BookOpen,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { clearAuth, getUser, type AuthUser } from "@/lib/auth";
@@ -34,6 +36,8 @@ const NAV = [
   { href: "/agents", icon: Brain, label: "Agents" },
   { href: "/analytics", icon: BarChart3, label: "Analytics" },
   { href: "/escalations", icon: AlertTriangle, label: "Escalations" },
+  { href: "/knowledge", icon: BookOpen, label: "Knowledge Base" },
+  { href: "/audit", icon: ClipboardList, label: "Audit Log" },
   { href: "/settings", icon: Settings, label: "Settings" },
 ];
 

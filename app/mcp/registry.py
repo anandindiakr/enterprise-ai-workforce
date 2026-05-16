@@ -17,7 +17,7 @@ class MCPRegistry:
         self._by_name: dict[str, MCPConnector] = {}
         self._by_department: dict[Department, list[MCPConnector]] = {}
 
-    # ---- Registration --------------------------------------------------
+    # ── Registration ──────────────────────────────────────────────────────────
 
     def register(self, connector: MCPConnector, department: Department) -> None:
         self._by_name[connector.name] = connector
@@ -35,6 +35,7 @@ class MCPRegistry:
                 try:
                     await c.connect()
                     await c.discover_tools()
+                    logger.info("MCP connector {} ready ({} tools)", c.name, len(c.cached_tools()))
                 except Exception as exc:  # pragma: no cover
                     logger.warning("MCP connector {} init failed: {}", c.name, exc)
 
@@ -45,7 +46,7 @@ class MCPRegistry:
             except Exception:  # pragma: no cover
                 pass
 
-    # ---- Lookup --------------------------------------------------------
+    # ── Lookup ────────────────────────────────────────────────────────────────
 
     def get(self, name: str) -> MCPConnector | None:
         return self._by_name.get(name)
@@ -93,8 +94,16 @@ def mcp_registry() -> MCPRegistry:
     return _registry
 
 
+def _resolve_url(explicit: str, path_suffix: str) -> str:
+    """Return explicit URL if set, otherwise build from mcp_base_url."""
+    if explicit:
+        return explicit
+    base = settings.mcp_base_url.rstrip("/")
+    return f"{base}/mcp/{path_suffix}"
+
+
 def _bootstrap(reg: MCPRegistry) -> None:
-    """Register stock connectors based on environment configuration."""
+    """Register all connectors — always configured (pointing to built-in mock servers by default)."""
     from app.mcp.connectors.crm import CRMConnector
     from app.mcp.connectors.hris import HRISConnector
     from app.mcp.connectors.erp import ERPConnector
@@ -104,25 +113,35 @@ def _bootstrap(reg: MCPRegistry) -> None:
     from app.mcp.connectors.email import EmailConnector
     from app.mcp.connectors.analytics import AnalyticsConnector
 
-    reg.register(CRMConnector(settings.mcp_crm_url, settings.mcp_crm_token), Department.SALES)
-    reg.register(HRISConnector(settings.mcp_hris_url, settings.mcp_hris_token), Department.HR)
-    reg.register(ERPConnector(settings.mcp_erp_url, settings.mcp_erp_token), Department.FINANCE)
     reg.register(
-        TicketingConnector(settings.mcp_ticketing_url, settings.mcp_ticketing_token),
+        CRMConnector(_resolve_url(settings.mcp_crm_url, "crm"), settings.mcp_crm_token),
+        Department.SALES,
+    )
+    reg.register(
+        HRISConnector(_resolve_url(settings.mcp_hris_url, "hris"), settings.mcp_hris_token),
+        Department.HR,
+    )
+    reg.register(
+        ERPConnector(_resolve_url(settings.mcp_erp_url, "finance"), settings.mcp_erp_token),
+        Department.FINANCE,
+    )
+    reg.register(
+        TicketingConnector(_resolve_url(settings.mcp_ticketing_url, "devops"), settings.mcp_ticketing_token),
         Department.TECHNOLOGY,
     )
     reg.register(
-        KnowledgeConnector(settings.mcp_knowledge_url, settings.mcp_knowledge_token),
+        KnowledgeConnector(_resolve_url(settings.mcp_knowledge_url, "knowledge"), settings.mcp_knowledge_token),
         Department.CUSTOMER_CARE,
     )
     reg.register(
-        CalendarConnector(settings.mcp_calendar_url, settings.mcp_calendar_token),
+        CalendarConnector(_resolve_url(settings.mcp_calendar_url, "calendar"), settings.mcp_calendar_token),
         Department.RECEPTION,
     )
     reg.register(
-        EmailConnector(settings.mcp_email_url, settings.mcp_email_token), Department.MARKETING
+        EmailConnector(_resolve_url(settings.mcp_email_url, "email"), settings.mcp_email_token),
+        Department.MARKETING,
     )
     reg.register(
-        AnalyticsConnector(settings.mcp_analytics_url, settings.mcp_analytics_token),
+        AnalyticsConnector(_resolve_url(settings.mcp_analytics_url, "analytics"), settings.mcp_analytics_token),
         Department.MARKETING,
     )
