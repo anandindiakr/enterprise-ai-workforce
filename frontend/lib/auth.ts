@@ -7,8 +7,13 @@ const TOKEN_KEY = "workforce_token";
 const USER_KEY  = "workforce_user";
 
 export interface AuthUser {
-  username: string;
-  roles: string[];
+  user_id?:   string;
+  username:   string;
+  email?:     string;
+  full_name?: string;
+  roles:      string[];
+  scopes?:    string[];
+  tenant_id?: string;
 }
 
 export function saveToken(token: string, user: AuthUser): void {
@@ -16,6 +21,9 @@ export function saveToken(token: string, user: AuthUser): void {
   localStorage.setItem(TOKEN_KEY, token);
   localStorage.setItem(USER_KEY, JSON.stringify(user));
 }
+
+/** Alias kept for callers that use setToken */
+export const setToken = saveToken;
 
 export function getToken(): string | null {
   if (typeof window === "undefined") return null;
@@ -47,7 +55,7 @@ export function authHeaders(): Record<string, string> {
 
 /** Redirects to /login if no token is stored. Call inside useEffect. */
 export function requireAuth(): void {
-  if (!isAuthenticated()) {
+  if (typeof window !== "undefined" && !isAuthenticated()) {
     window.location.href = "/login";
   }
 }

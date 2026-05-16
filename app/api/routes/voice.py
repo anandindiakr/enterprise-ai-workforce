@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 from datetime import datetime, timedelta, timezone
-from typing import Optional
+from typing import AsyncIterator, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import PlainTextResponse, StreamingResponse
@@ -14,11 +15,55 @@ from pydantic import BaseModel
 from app.core.config import settings
 from app.core.types import Department
 from app.models.schemas import Principal, VoiceSessionDescriptor, VoiceSessionStartRequest
-from app.security.auth import get_optional_principal, get_principal
+from app.security.auth import optional_principal, get_principal
 from app.voice.gateway import voice_gateway
 from app.voice.session import voice_session_manager
 
 router = APIRouter(prefix="/voice", tags=["voice"])
+
+
+# ── Voice Provider Configuration Status ─────────────────────────────────────
+
+@router.get("/config")
+async def voice_config() -> dict:
+    """Report which voice providers are currently configured.
+
+    This is called by the frontend to show provider status badges.
+    Does NOT require authentication so the settings page can call it.
+    """
+    deepgram_key  = bool(os.getenv("DEEPGRAM_API_KEY") or settings.deepgram_api_key)
+    eleven_key    = bool(os.getenv("ELEVENLABS_API_KEY") or settings.elevenlabs_api_key)
+    openai_key    = bool(os.getenv("OPENAI_API_KEY") or settings.openai_api_key)
+    twilio_sid    = bool(os.getenv("TWILIO_ACCOUNT_SID") or settings.twilio_account_sid)
+    livekit_key   = bool(os.getenv("LIVEKIT_API_KEY") or settings.livekit_api_key)
+    azure_key     = bool(os.getenv("AZURE_SPEECH_KEY") or settings.azure_speech_key)
+
+    stt_provider  = "deepgram" if deepgram_key else ("whisper" if openai_key else None)
+    tts_provider  = "elevenlabs" if eleven_key else ("openai-tts" if openai_key else None)
+
+    return {
+        "stt": {
+            "active": stt_provider,
+            "providers": {
+                "deepgram":  {"configured": deepgram_key,  "label": "Deepgram Nova-2"},
+                "whisper":   {"configured": openai_key,    "label": "OpenAI Whisper"},
+                "azure":     {"configured": azure_key,     "label": "Azure Speech"},
+            },
+        },
+        "tts": {
+            "active": tts_provider,
+            "providers": {
+                "elevenlabs": {"configured": eleven_key,  "label": "ElevenLabs Turbo"},
+                "openai-tts": {"configured": openai_key, "label": "OpenAI TTS-1"},
+                "azure":      {"configured": azure_key,  "label": "Azure Speech"},
+            },
+        },
+        "telephony": {
+            "twilio":  {"configured": twilio_sid,  "label": "Twilio"},
+            "livekit": {"configured": livekit_key, "label": "LiveKit"},
+        },
+        "websocket_path": "/api/v1/ws/voice/{session_id}",
+    }
 
 
 # ── Voice Session Management ────────────────────────────────────────────────
@@ -63,7 +108,7 @@ async def close_voice_session(
 async def transcribe_audio(
     audio: UploadFile = File(...),
     department: Optional[str] = Form(None),
-    principal: Principal = Depends(get_optional_principal),  # noqa: ARG001
+    principal: Principal = Depends(optional_principal),  # noqa: ARG001
 ) -> dict:
     """
     Accept a browser audio blob (webm/ogg/wav) and return the transcript.
@@ -147,7 +192,7 @@ class SpeakRequest(BaseModel):
 @router.post("/speak")
 async def speak_text(
     payload: SpeakRequest,
-    principal: Principal = Depends(get_optional_principal),  # noqa: ARG001
+    principal: Principal = Depends(optional_principal),  # noqa: ARG001
 ) -> StreamingResponse:
     """
     Convert text to speech.
@@ -258,3 +303,61 @@ async def livekit_token(
 
     provider = LiveKitProvider()
     return {"url": provider.url, "token": provider.mint_access_token(room, identity)}
+
+
+# ── Streaming TTS ────────────────────────────────────────────────────────────
+
+@router.post("/speak/stream")
+async def speak_stream(
+    payload: SpeakRequest,
+    principal: Principal = Depends(optional_principal),  # noqa: ARG001
+) -> StreamingResponse:
+    """
+    Streaming TTS endpoint.
+    Returns raw audio bytes in chunks via chunked transfer encoding.
+    Uses ElevenLabs streaming when configured, falls back to full OpenAI TTS.
+    """
+    eleven_key = os.getenv("ELEVENLABS_API_KEY", "")
+    if eleven_key:
+        async def _eleven_stream() -> AsyncIterator[bytes]:
+            import aiohttp  # type: ignore
+            voice_id = payload.voice_id or os.getenv("ELEVENLABS_VOICE_ID", "EXAVITQu4vr4xnSDxMaL")
+            url = f"https://api.elevenlabs.io/v1/text-to-speech/{voice_id}/stream"
+            headers = {
+                "xi-api-key": eleven_key,
+                "Content-Type": "application/json",
+                "Accept": "audio/mpeg",
+            }
+            body = {
+                "text": payload.text[:4096],
+                "model_id": "eleven_turbo_v2",
+                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+            }
+            async with aiohttp.ClientSession() as session:
+                async with session.post(url, json=body, headers=headers) as resp:
+                    if resp.status != 200:
+                        err = await resp.text()
+                        raise RuntimeError(f"ElevenLabs {resp.status}: {err}")
+                    async for chunk in resp.content.iter_chunked(4096):
+                        yield chunk
+
+        return StreamingResponse(
+            _eleven_stream(),
+            media_type="audio/mpeg",
+            headers={"X-TTS-Provider": "elevenlabs", "X-Accel-Buffering": "no"},
+        )
+
+    # Fallback: full OpenAI TTS
+    openai_key = os.getenv("OPENAI_API_KEY", "")
+    if openai_key:
+        audio_bytes = await _openai_tts(payload.text)
+        return StreamingResponse(
+            io.BytesIO(audio_bytes),
+            media_type="audio/mpeg",
+            headers={"X-TTS-Provider": "openai"},
+        )
+
+    raise HTTPException(
+        status_code=503,
+        detail="No TTS provider configured. Set ELEVENLABS_API_KEY or OPENAI_API_KEY.",
+    )
