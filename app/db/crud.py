@@ -161,8 +161,14 @@ async def create_chat_session(
     title: str | None = None,
     metadata: dict | None = None,
 ) -> ChatSessionModel:
-    obj_id = uuid.UUID(session_id) if session_id else uuid.uuid4()
-    uid = uuid.UUID(user_id) if user_id and user_id not in ("anonymous", "voice-user", "twilio-caller") else None
+    try:
+        obj_id = uuid.UUID(session_id) if session_id else uuid.uuid4()
+    except (ValueError, AttributeError):
+        obj_id = uuid.uuid4()
+    try:
+        uid = uuid.UUID(user_id) if user_id and user_id not in ("anonymous", "voice-user", "twilio-caller") else None
+    except (ValueError, AttributeError):
+        uid = None
     session = ChatSessionModel(
         id=obj_id,
         user_id=uid,
