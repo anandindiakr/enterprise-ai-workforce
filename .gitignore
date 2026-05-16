@@ -46,3 +46,6 @@ logs/
 
 # Kubernetes secrets
 deploy/k8s/secrets/
+
+frontend/tsconfig.tsbuildinfo
+
