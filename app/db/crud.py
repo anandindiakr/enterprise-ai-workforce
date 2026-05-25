@@ -175,7 +175,7 @@ async def create_chat_session(
         user_id=uid,
         tenant_id=tenant_id,
         department=department,
-        title=title or f"Chat – {department}",
+        title=title or f"Chat - {str(department).replace('_', ' ').title()}",
         status="active",
         metadata_=metadata or {},
     )

@@ -25,6 +25,7 @@ import {
   AlertTriangle,
   ClipboardList,
   BookOpen,
+  GitBranch,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { clearAuth, getUser, type AuthUser } from "@/lib/auth";
@@ -34,6 +35,7 @@ const NAV = [
   { href: "/chat", icon: MessageSquare, label: "Chat Console" },
   { href: "/voice", icon: Mic, label: "Voice Console" },
   { href: "/agents", icon: Brain, label: "Agents" },
+  { href: "/workflows", icon: GitBranch, label: "Workflows" },
   { href: "/analytics", icon: BarChart3, label: "Analytics" },
   { href: "/escalations", icon: AlertTriangle, label: "Escalations" },
   { href: "/knowledge", icon: BookOpen, label: "Knowledge Base" },
