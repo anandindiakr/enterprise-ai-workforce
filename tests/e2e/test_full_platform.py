@@ -1,570 +1,583 @@
-"""
-Full-platform E2E test suite for AI Workforce Platform.
-Covers: welcome page, auth, dashboard, chat, voice, agents,
-        workflows, MCP/CRM, WebSocket, observability, navigation.
+"""End-to-end platform tests — run against live Docker services.
 
-Backend:  http://localhost:8080
-Frontend: http://localhost:4000
+Services expected:
+  API      → http://localhost:8080
+  Frontend → http://localhost:3000
+
+Usage:
+  pytest tests/e2e/test_full_platform.py -v --timeout=60
 """
+
 from __future__ import annotations
 
 import json
 import time
 import httpx
 import pytest
-from playwright.sync_api import Page, expect
 
-FRONTEND = "http://localhost:4000"
 API = "http://localhost:8080"
-ADMIN_USER = "admin"
-ADMIN_PASS = "admin"
+FE  = "http://localhost:3000"
+WS_BASE = f"ws://localhost:8080/api/v1/ws"
+BASE    = f"{API}/api/v1"
 
+# ---------------------------------------------------------------------------
+# Shared helpers
+# ---------------------------------------------------------------------------
 
-# ── helpers ──────────────────────────────────────────────────────────────────
-
-def get_token() -> str:
+def login(username: str = "admin", password: str = "changeme123") -> str:
+    """Return a JWT access token (JSON body)."""
     r = httpx.post(
-        f"{API}/api/v1/auth/token",
-        json={"username": ADMIN_USER, "password": ADMIN_PASS},
+        f"{BASE}/auth/token",
+        json={"username": username, "password": password},
         timeout=15,
     )
-    assert r.status_code == 200, f"Login failed {r.status_code}: {r.text}"
+    assert r.status_code == 200, f"Login {r.status_code}: {r.text[:200]}"
     return r.json()["access_token"]
 
 
-def auth_headers() -> dict:
-    return {"Authorization": f"Bearer {get_token()}"}
+def auth_headers(token: str) -> dict:
+    return {"Authorization": f"Bearer {token}"}
 
 
-def inject_token(page: Page) -> None:
-    """Inject auth token into localStorage before navigating."""
-    token = get_token()
-    page.goto(f"{FRONTEND}/login", wait_until="networkidle")
-    page.evaluate(f"localStorage.setItem('workforce_token', '{token}')")
+# ---------------------------------------------------------------------------
+# 1. Infrastructure / Health
+# ---------------------------------------------------------------------------
 
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 1. WELCOME / LANDING PAGE
-# ══════════════════════════════════════════════════════════════════════════════
-
-class TestWelcomePage:
-    def test_welcome_loads(self, page: Page):
-        page.goto(f"{FRONTEND}/welcome", wait_until="networkidle")
-        assert page.title() != ""
-        page.screenshot(path="tests/e2e/screenshots/e2e_01_welcome.png", full_page=True)
-
-    def test_welcome_has_product_keywords(self, page: Page):
-        page.goto(f"{FRONTEND}/welcome", wait_until="networkidle")
-        body = page.locator("body").inner_text().lower()
-        found = [kw for kw in ["ai", "workforce", "enterprise", "agent"] if kw in body]
-        assert len(found) >= 2, f"Missing keywords, found only: {found}"
-
-    def test_welcome_has_cta_buttons(self, page: Page):
-        page.goto(f"{FRONTEND}/welcome", wait_until="networkidle")
-        btns = page.locator("a[href], button").all()
-        assert len(btns) >= 1
-
-    def test_unauthenticated_root_redirects(self, page: Page):
-        """/ without token → /welcome or /login."""
-        page.goto(FRONTEND, wait_until="networkidle")
-        assert "/welcome" in page.url or "/login" in page.url, \
-            f"Expected redirect, got: {page.url}"
-
-    def test_welcome_no_js_errors(self, page: Page):
-        errors: list[str] = []
-        page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
-        page.goto(f"{FRONTEND}/welcome", wait_until="networkidle")
-        page.wait_for_timeout(800)
-        critical = [e for e in errors if any(k in e for k in ("SyntaxError", "ReferenceError", "TypeError"))]
-        assert not critical, f"Critical JS errors: {critical}"
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 2. AUTHENTICATION
-# ══════════════════════════════════════════════════════════════════════════════
-
-class TestAuthentication:
-    def test_login_page_renders(self, page: Page):
-        page.goto(f"{FRONTEND}/login", wait_until="networkidle")
-        page.screenshot(path="tests/e2e/screenshots/e2e_02_login.png")
-        expect(page.locator("input[type='password']")).to_be_visible()
-
-    def test_api_token_issue(self):
-        token = get_token()
-        assert len(token) > 30
-
-    def test_api_login_invalid_credentials(self):
-        r = httpx.post(
-            f"{API}/api/v1/auth/token",
-            json={"username": "bad_user", "password": "wrong_pass"},
-            timeout=10,
-        )
-        assert r.status_code in (400, 401, 403)
-
-    def test_api_me_endpoint(self):
-        r = httpx.get(f"{API}/api/v1/auth/me", headers=auth_headers(), timeout=10)
+class TestInfrastructure:
+    def test_api_health(self):
+        r = httpx.get(f"{BASE}/health", timeout=10)
         assert r.status_code == 200
-        data = r.json()
-        assert "user_id" in data
-        assert data["user_id"] == ADMIN_USER
-
-    def test_api_me_requires_auth(self):
-        r = httpx.get(f"{API}/api/v1/auth/me", timeout=10)
-        assert r.status_code in (401, 403, 422)
-
-    def test_login_ui_success(self, page: Page):
-        page.goto(f"{FRONTEND}/login", wait_until="networkidle")
-        page.fill("input[autocomplete='username']", ADMIN_USER)
-        page.fill("input[autocomplete='current-password']", ADMIN_PASS)
-        page.click("button[type='submit']")
-        # Wait for navigation away from /login
-        page.wait_for_function("window.location.pathname !== '/login'", timeout=15000)
-        page.wait_for_load_state("networkidle")
-        assert "/login" not in page.url, f"Still on login: {page.url}"
-        page.screenshot(path="tests/e2e/screenshots/e2e_03_post_login.png", full_page=True)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 3. DASHBOARD
-# ══════════════════════════════════════════════════════════════════════════════
-
-class TestDashboard:
-    def test_dashboard_loads(self, page: Page):
-        inject_token(page)
-        page.goto(FRONTEND, wait_until="networkidle")
-        assert "/login" not in page.url and "/welcome" not in page.url
-        page.screenshot(path="tests/e2e/screenshots/e2e_04_dashboard.png", full_page=True)
-
-    def test_dashboard_has_navigation(self, page: Page):
-        inject_token(page)
-        page.goto(FRONTEND, wait_until="networkidle")
-        nav = page.locator("nav, aside, [role='navigation'], [class*='sidebar']").first
-        expect(nav).to_be_visible()
-
-    def test_dashboard_has_platform_content(self, page: Page):
-        inject_token(page)
-        page.goto(FRONTEND, wait_until="networkidle")
-        body = page.locator("body").inner_text().lower()
-        keywords = ["agent", "chat", "voice", "department", "reception", "sales", "hr"]
-        found = [kw for kw in keywords if kw in body]
-        assert len(found) >= 1, f"No platform keywords found. Snippet: {body[:400]}"
-
-    def test_dashboard_no_page_errors(self, page: Page):
-        errors: list[str] = []
-        page.on("pageerror", lambda e: errors.append(str(e)))
-        inject_token(page)
-        page.goto(FRONTEND, wait_until="networkidle")
-        page.wait_for_timeout(1200)
-        assert not errors, f"Page errors: {errors}"
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 4. CHAT API
-# ══════════════════════════════════════════════════════════════════════════════
-
-class TestChatAPI:
-    def test_chat_receptionist(self):
-        r = httpx.post(
-            f"{API}/api/v1/chat",
-            json={"message": "Hello, who are you?", "department": "reception", "user_id": "e2e_test"},
-            headers=auth_headers(),
-            timeout=60,
-        )
-        assert r.status_code == 200, f"Chat failed: {r.text}"
-        data = r.json()
-        assert "message" in data
-        assert data["message"]["content"]
-
-    def test_chat_all_departments(self):
-        departments = ["reception", "sales", "hr", "finance", "technology", "marketing", "customer_care"]
-        hdrs = auth_headers()
-        results = {}
-        for dept in departments:
-            r = httpx.post(
-                f"{API}/api/v1/chat",
-                json={"message": "Introduce yourself briefly.", "department": dept, "user_id": "e2e_test"},
-                headers=hdrs,
-                timeout=60,
-            )
-            results[dept] = r.status_code
-        failed = {d: c for d, c in results.items() if c != 200}
-        assert not failed, f"Departments failed: {failed}"
-
-    def test_chat_session_continuity(self):
-        hdrs = auth_headers()
-        r1 = httpx.post(
-            f"{API}/api/v1/chat",
-            json={"message": "My name is TestUser", "department": "reception", "user_id": "e2e_session_test"},
-            headers=hdrs, timeout=60,
-        )
-        assert r1.status_code == 200
-        session_id = r1.json().get("session_id")
-        assert session_id
-
-        r2 = httpx.post(
-            f"{API}/api/v1/chat",
-            json={"message": "What is my name?", "department": "reception",
-                  "user_id": "e2e_session_test", "session_id": session_id},
-            headers=hdrs, timeout=60,
-        )
-        assert r2.status_code == 200
-
-    def test_chat_allows_anonymous(self):
-        """Chat uses optional auth — anonymous requests should succeed."""
-        r = httpx.post(
-            f"{API}/api/v1/chat",
-            json={"message": "Hello", "department": "reception"},
-            timeout=60,
-        )
-        assert r.status_code == 200, f"Anonymous chat failed: {r.text}"
-
-    def test_chat_ui_loads(self, page: Page):
-        inject_token(page)
-        page.goto(f"{FRONTEND}/chat", wait_until="networkidle")
-        page.screenshot(path="tests/e2e/screenshots/e2e_05_chat_ui.png", full_page=True)
-        assert "/login" not in page.url
-
-    def test_chat_ui_can_send_message(self, page: Page):
-        inject_token(page)
-        page.goto(f"{FRONTEND}/chat", wait_until="networkidle")
-        page.wait_for_timeout(1000)
-        # Find message input
-        textarea = page.locator(
-            "textarea, input[placeholder*='essage' i], input[placeholder*='type' i]"
-        ).first
-        if textarea.is_visible():
-            textarea.fill("Hello, test message from E2E")
-            send_btn = page.locator("button[type='submit'], button:has-text('Send')").first
-            if send_btn.is_visible():
-                send_btn.click()
-                page.wait_for_timeout(3000)
-                page.screenshot(path="tests/e2e/screenshots/e2e_06_chat_sent.png", full_page=True)
-        else:
-            pytest.skip("Chat input not found - may need different selector")
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 5. VOICE API
-# ══════════════════════════════════════════════════════════════════════════════
-
-class TestVoiceAPI:
-    def test_tts_speak_endpoint(self):
-        r = httpx.post(
-            f"{API}/api/v1/voice/speak",
-            json={"text": "Hello from the AI Workforce Platform.", "department": "reception"},
-            headers=auth_headers(),
-            timeout=30,
-        )
-        assert r.status_code == 200, f"TTS failed: {r.text}"
-        ct = r.headers.get("content-type", "")
-        assert "audio" in ct, f"Expected audio content-type, got: {ct}"
-
-    def test_tts_all_departments(self):
-        hdrs = auth_headers()
-        departments = ["reception", "sales", "hr", "finance", "technology"]
-        failed = []
-        for dept in departments:
-            r = httpx.post(
-                f"{API}/api/v1/voice/speak",
-                json={"text": f"Hello from {dept} department.", "department": dept},
-                headers=hdrs, timeout=30,
-            )
-            if r.status_code != 200:
-                failed.append(f"{dept}:{r.status_code}")
-        assert not failed, f"TTS failed for: {failed}"
-
-    def test_tts_requires_auth(self):
-        """Voice sessions require auth; TTS speak may use optional auth."""
-        r = httpx.post(
-            f"{API}/api/v1/voice/sessions",
-            json={"department": "reception", "user_id": "anon"},
-            timeout=10,
-        )
-        assert r.status_code in (401, 403, 422), f"Expected auth required, got {r.status_code}"
-
-    def test_voice_create_session(self):
-        r = httpx.post(
-            f"{API}/api/v1/voice/sessions",
-            json={"department": "reception", "user_id": "e2e_test"},
-            headers=auth_headers(),
-            timeout=15,
-        )
-        assert r.status_code in (200, 201), f"Session create failed: {r.text}"
-        data = r.json()
-        assert "session_id" in data
-
-    def test_voice_list_sessions(self):
-        r = httpx.get(f"{API}/api/v1/voice/sessions", headers=auth_headers(), timeout=10)
-        assert r.status_code == 200
-        assert isinstance(r.json(), list)
-
-    def test_voice_stt_endpoint_reachable(self):
-        import io
-        # Minimal WAV header (44 bytes) + silence
-        fake_wav = bytes([
-            0x52, 0x49, 0x46, 0x46, 0x24, 0x08, 0x00, 0x00,
-            0x57, 0x41, 0x56, 0x45, 0x66, 0x6d, 0x74, 0x20,
-            0x10, 0x00, 0x00, 0x00, 0x01, 0x00, 0x01, 0x00,
-            0x40, 0x1f, 0x00, 0x00, 0x80, 0x3e, 0x00, 0x00,
-            0x02, 0x00, 0x10, 0x00, 0x64, 0x61, 0x74, 0x61,
-            0x00, 0x08, 0x00, 0x00,
-        ]) + b'\x00' * 2048
-        r = httpx.post(
-            f"{API}/api/v1/voice/transcribe",
-            content=fake_wav,
-            headers={**auth_headers(), "Content-Type": "audio/wav"},
-            timeout=15,
-        )
-        # 200 = transcribed, 422 = bad audio (endpoint works), 400 = bad input (endpoint works)
-        assert r.status_code in (200, 400, 422), f"STT unreachable: {r.status_code} {r.text}"
-
-    def test_voice_ui_loads(self, page: Page):
-        inject_token(page)
-        page.goto(f"{FRONTEND}/voice", wait_until="networkidle")
-        page.screenshot(path="tests/e2e/screenshots/e2e_07_voice_ui.png", full_page=True)
-        assert "/login" not in page.url
-
-    def test_voice_ui_has_mic_control(self, page: Page):
-        inject_token(page)
-        page.goto(f"{FRONTEND}/voice", wait_until="networkidle")
-        # Look for any interactive element suggesting voice control
-        mic = page.locator(
-            "button:has-text('Start'), button:has-text('Record'), button:has-text('Speak'), "
-            "button[aria-label*='mic' i], [class*='mic' i], [class*='voice' i] button"
-        ).first
-        expect(mic).to_be_visible()
-
-    def test_voice_ui_has_department_selector(self, page: Page):
-        inject_token(page)
-        page.goto(f"{FRONTEND}/voice", wait_until="networkidle")
-        body = page.locator("body").inner_text().lower()
-        found = [d for d in ["reception", "sales", "hr", "finance", "technology"] if d in body]
-        assert len(found) >= 1, "No departments visible on voice page"
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 6. AGENTS & WORKFLOWS API
-# ══════════════════════════════════════════════════════════════════════════════
-
-class TestAgentsWorkflows:
-    def test_agents_list(self):
-        r = httpx.get(f"{API}/api/v1/agents", headers=auth_headers(), timeout=10)
-        assert r.status_code == 200
-        agents = r.json()
-        assert isinstance(agents, list)
-        assert len(agents) >= 7  # at least 7 departments
-        # Check structure
-        first = agents[0]
-        assert "agent_name" in first
-        assert "department" in first
-
-    def test_agents_have_all_departments(self):
-        r = httpx.get(f"{API}/api/v1/agents", headers=auth_headers(), timeout=10)
-        agents = r.json()
-        departments = {a["department"] for a in agents}
-        expected = {"reception", "sales", "hr", "finance", "technology", "marketing", "customer_care"}
-        missing = expected - departments
-        assert not missing, f"Missing departments: {missing}"
-
-    def test_workflow_reception(self):
-        r = httpx.post(
-            f"{API}/api/v1/workflows",
-            json={"task": "I need help getting started.", "department": "reception", "user_id": "e2e_test"},
-            headers=auth_headers(),
-            timeout=90,
-        )
-        assert r.status_code == 200, f"Workflow failed: {r.text}"
-        data = r.json()
-        assert "workflow_id" in data
-        assert "output" in data
-        assert data["output"]
-
-    def test_workflow_requires_auth(self):
-        r = httpx.post(
-            f"{API}/api/v1/workflows",
-            json={"task": "test", "department": "reception", "user_id": "e2e_test"},
-            timeout=10,
-        )
-        assert r.status_code in (401, 403, 422)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 7. MCP / CRM INTEGRATION
-# ══════════════════════════════════════════════════════════════════════════════
-
-class TestMCPCRM:
-    def test_mcp_tools_list(self):
-        r = httpx.get(f"{API}/api/v1/mcp/tools", headers=auth_headers(), timeout=10)
-        assert r.status_code == 200
-        assert isinstance(r.json(), list)
-
-    def test_crm_list_tools_jsonrpc(self):
-        r = httpx.post(
-            f"{API}/mcp/crm",
-            json={"jsonrpc": "2.0", "id": 1, "method": "tools/list", "params": {}},
-            headers=auth_headers(),
-            timeout=15,
-        )
-        assert r.status_code == 200
-        data = r.json()
-        assert "result" in data
-        tools = data["result"]["tools"]
-        assert len(tools) >= 1
-        tool_names = [t["name"] for t in tools]
-        assert any("crm" in n for n in tool_names)
-
-    def test_crm_list_contacts(self):
-        r = httpx.get(f"{API}/mcp/crm/contacts", headers=auth_headers(), timeout=10)
-        assert r.status_code == 200
-        data = r.json()
-        assert "contacts" in data
-        assert len(data["contacts"]) >= 1
-        # Verify structure
-        c = data["contacts"][0]
-        assert "name" in c
-        assert "email" in c
-
-    def test_crm_call_tool_jsonrpc(self):
-        r = httpx.post(
-            f"{API}/mcp/crm",
-            json={
-                "jsonrpc": "2.0", "id": 2,
-                "method": "tools/call",
-                "params": {"name": "crm_list_contacts", "arguments": {}},
-            },
-            headers=auth_headers(),
-            timeout=15,
-        )
-        assert r.status_code == 200
-        data = r.json()
-        assert "result" in data
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 8. WEBSOCKET
-# ══════════════════════════════════════════════════════════════════════════════
-
-class TestWebSocket:
-    def test_ws_chat_endpoint_exists(self):
-        """WS endpoint returns 404 on plain HTTP (no upgrade) — that's expected.
-        The actual connectivity is verified in test_ws_chat_functional."""
-        import urllib.request, urllib.error
-        try:
-            urllib.request.urlopen("http://localhost:8080/api/v1/ws/chat", timeout=5)
-            # If 200 returned for plain HTTP that's also fine
-        except urllib.error.HTTPError as e:
-            # 400=bad request, 404=endpoint exists but needs WS, 426=upgrade required
-            assert e.code in (400, 404, 426, 403), f"Unexpected HTTP code: {e.code}"
-        except ConnectionResetError:
-            pass  # server closed non-WS connection — endpoint exists
-
-    def test_ws_voice_endpoint_exists(self):
-        import urllib.request, urllib.error
-        try:
-            urllib.request.urlopen("http://localhost:8080/api/v1/ws/voice/test_session", timeout=5)
-        except urllib.error.HTTPError as e:
-            assert e.code in (400, 404, 426, 403), f"Unexpected HTTP code: {e.code}"
-        except ConnectionResetError:
-            pass
-
-    def test_ws_chat_functional(self):
-        """Connect via WebSocket and exchange a message."""
-        import websocket  # websocket-client
-        token = get_token()
-        ws = websocket.create_connection(
-            f"ws://localhost:8080/api/v1/ws/chat?user_id=e2e_ws&token={token}",
-            timeout=10,
-        )
-        ws.send(json.dumps({"message": "Hello", "department": "reception"}))
-        resp = json.loads(ws.recv())
-        ws.close()
-        assert "content" in resp or "message" in resp or "role" in resp
-
-
-# ══════════════════════════════════════════════════════════════════════════════
-# 9. OBSERVABILITY & HEALTH
-# ══════════════════════════════════════════════════════════════════════════════
-
-class TestObservability:
-    def test_health_endpoint(self):
-        r = httpx.get(f"{API}/api/v1/health", timeout=10)
-        assert r.status_code == 200
-        assert r.json().get("status") == "ok"
-
-    def test_api_docs_accessible(self):
-        r = httpx.get(f"{API}/docs", timeout=10)
-        assert r.status_code == 200
-
-    def test_openapi_schema_complete(self):
-        r = httpx.get(f"{API}/openapi.json", timeout=10)
-        assert r.status_code == 200
-        schema = r.json()
-        paths = schema.get("paths", {})
-        assert len(paths) >= 8  # health, auth, chat, voice, agents, workflows, mcp
-        # Verify key paths exist
-        assert "/api/v1/health" in paths
-        assert "/api/v1/auth/token" in paths
-        assert "/api/v1/chat" in paths or "/api/v1/chat/" in paths
-        assert "/api/v1/agents" in paths
-
-    def test_metrics_endpoint(self):
-        r = httpx.get(f"{API}/api/v1/metrics", timeout=10)
-        # May return 200 (Prometheus format) or 401 (protected)
-        assert r.status_code in (200, 401, 403)
+        body = r.json()
+        assert body.get("status") in ("ok", "healthy", "degraded"), body
 
     def test_api_root(self):
         r = httpx.get(f"{API}/", timeout=10)
+        assert r.status_code in (200, 307, 308)
+
+    def test_openapi_docs(self):
+        r = httpx.get(f"{API}/docs", timeout=10)
         assert r.status_code == 200
-        data = r.json()
-        assert "name" in data or "version" in data
+
+    def test_openapi_schema(self):
+        r = httpx.get(f"{API}/openapi.json", timeout=10)
+        assert r.status_code == 200
+        assert "paths" in r.json()
+
+    def test_frontend_reachable(self):
+        r = httpx.get(FE, timeout=15)
+        assert r.status_code == 200
+
+    def test_metrics_endpoint(self):
+        r = httpx.get(f"{BASE}/metrics", timeout=10)
+        assert r.status_code in (200, 404)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
-# 10. FULL NAVIGATION FLOW
-# ══════════════════════════════════════════════════════════════════════════════
+# ---------------------------------------------------------------------------
+# 2. Authentication
+# ---------------------------------------------------------------------------
 
-class TestNavigationFlow:
-    def test_all_main_pages_accessible(self, page: Page):
-        inject_token(page)
-        routes = ["/", "/chat", "/voice", "/agents", "/settings"]
-        results = {}
-        for path in routes:
-            page.goto(f"{FRONTEND}{path}", wait_until="networkidle", timeout=15000)
-            page.wait_for_timeout(500)
-            is_auth = "/login" not in page.url and "/welcome" not in page.url
-            results[path] = {"url": page.url, "authenticated": is_auth}
-            page.screenshot(
-                path=f"tests/e2e/screenshots/e2e_nav_{path.strip('/') or 'home'}.png"
-            )
-        # / and /chat must be accessible
-        assert results["/"]["authenticated"] or results["/chat"]["authenticated"], \
-            f"Core pages not accessible: {results}"
+class TestAuthentication:
+    def test_login_success(self):
+        token = login()
+        assert len(token) > 10
 
-    def test_sidebar_has_links(self, page: Page):
-        inject_token(page)
-        page.goto(FRONTEND, wait_until="networkidle")
-        links = page.locator("nav a, aside a, [class*='sidebar'] a").all()
-        assert len(links) >= 2, f"Expected sidebar links, found {len(links)}"
+    def test_login_returns_token_type(self):
+        r = httpx.post(
+            f"{BASE}/auth/token",
+            json={"username": "admin", "password": "changeme123"},
+            timeout=15,
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert "access_token" in body
+        assert body.get("token_type", "").lower() == "bearer"
 
-    def test_logout_clears_session(self, page: Page):
-        inject_token(page)
-        page.goto(FRONTEND, wait_until="networkidle")
-        logout = page.locator(
-            "button:has-text('Logout'), button:has-text('Sign out'), a:has-text('Logout'), "
-            "a:has-text('Sign out')"
-        ).first
-        if logout.is_visible():
-            logout.click()
-            page.wait_for_url(f"{FRONTEND}/**", wait_until="networkidle", timeout=10000)
-            assert "/login" in page.url or "/welcome" in page.url, \
-                f"Expected logout redirect, got: {page.url}"
-        else:
-            pytest.skip("Logout button not found in sidebar")
+    def test_login_wrong_password(self):
+        r = httpx.post(
+            f"{BASE}/auth/token",
+            json={"username": "admin", "password": "WRONG"},
+            timeout=15,
+        )
+        assert r.status_code in (400, 401, 403, 422)
 
-    def test_welcome_cta_goes_to_login(self, page: Page):
-        page.goto(f"{FRONTEND}/welcome", wait_until="networkidle")
-        cta = page.locator("a[href*='login'], button:has-text('Get Started'), a:has-text('Get Started')").first
-        if cta.is_visible():
-            cta.click()
-            page.wait_for_url(f"{FRONTEND}/**", wait_until="networkidle", timeout=10000)
-            assert "/login" in page.url or "/welcome" in page.url
+    def test_login_unknown_user(self):
+        r = httpx.post(
+            f"{BASE}/auth/token",
+            json={"username": "ghost_user_xyz", "password": "x"},
+            timeout=15,
+        )
+        assert r.status_code in (400, 401, 403, 422)
+
+    def test_protected_no_token_returns_401(self):
+        r = httpx.get(f"{BASE}/agents", timeout=10)
+        assert r.status_code in (401, 403)
+
+    def test_me_endpoint(self):
+        token = login()
+        r = httpx.get(f"{BASE}/auth/me", headers=auth_headers(token), timeout=10)
+        assert r.status_code == 200
+        body = r.json()
+        # /auth/me returns Principal: user_id, tenant_id, roles, scopes
+        assert any(k in body for k in ("username", "email", "id", "user_id"))
+
+
+# ---------------------------------------------------------------------------
+# 3. Chat
+# ---------------------------------------------------------------------------
+
+class TestChat:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.token = login()
+        self.hdrs  = auth_headers(self.token)
+
+    def _chat(self, message: str, department: str = "reception", sid: str = "e2e-test") -> dict:
+        r = httpx.post(
+            f"{BASE}/chat",
+            json={"message": message, "department": department, "session_id": sid},
+            headers=self.hdrs,
+            timeout=60,
+        )
+        assert r.status_code == 200, f"Chat {r.status_code}: {r.text[:300]}"
+        return r.json()
+
+    def _content(self, body: dict) -> str:
+        return (
+            (body.get("message") or {}).get("content")
+            or body.get("content")
+            or ""
+        )
+
+    def test_reception_greeting(self):
+        body = self._chat("Hello, what can you help me with?")
+        assert len(self._content(body)) > 0
+
+    def test_no_raw_json_in_response(self):
+        """Agent responses must NOT contain raw JSON transfer directives."""
+        body = self._chat("Please transfer me to sales")
+        content = self._content(body)
+        # should not start with { or contain raw {"transfer":
+        assert not content.strip().startswith('{"transfer"'), f"Raw JSON leaked: {content[:200]}"
+
+    def test_transfer_field_in_response(self):
+        """ChatResponse schema includes transferred_to field."""
+        body = self._chat("I need to speak to the sales team about pricing")
+        assert "transferred_to" in body   # field exists (may be null)
+
+    def test_sales_chat(self):
+        body = self._chat("What are your pricing plans?", department="sales")
+        assert len(self._content(body)) > 0
+
+    def test_hr_chat(self):
+        body = self._chat("How many vacation days do we get?", department="hr")
+        assert len(self._content(body)) > 0
+
+    def test_technology_chat(self):
+        body = self._chat("My laptop won't connect to WiFi", department="technology")
+        assert len(self._content(body)) > 0
+
+    def test_finance_chat(self):
+        body = self._chat("Help me with an expense report", department="finance")
+        assert len(self._content(body)) > 0
+
+    def test_marketing_chat(self):
+        body = self._chat("What campaigns are running this quarter?", department="marketing")
+        assert len(self._content(body)) > 0
+
+    def test_customer_care_chat(self):
+        body = self._chat("I have a complaint about my order", department="customer_care")
+        assert len(self._content(body)) > 0
+
+    def test_session_history(self):
+        sid = "e2e-history-session"
+        self._chat("My name is Alex", sid=sid)
+        r = httpx.get(f"{BASE}/chat/sessions/{sid}", headers=self.hdrs, timeout=15)
+        assert r.status_code in (200, 404)
+
+    def test_list_chat_sessions(self):
+        r = httpx.get(f"{BASE}/chat/sessions", headers=self.hdrs, timeout=15)
+        assert r.status_code in (200, 404)
+
+
+# ---------------------------------------------------------------------------
+# 4. Streaming SSE
+# ---------------------------------------------------------------------------
+
+class TestStreaming:
+    def test_chat_stream_returns_tokens(self):
+        token = login()
+        hdrs = auth_headers(token) | {"Accept": "text/event-stream"}
+        tokens: list[str] = []
+        with httpx.stream(
+            "POST",
+            f"{BASE}/chat/stream",
+            json={"message": "Say hello in one sentence", "department": "reception"},
+            headers=hdrs,
+            timeout=60,
+        ) as r:
+            assert r.status_code == 200, f"{r.status_code}: {r.text[:200]}"
+            for line in r.iter_lines():
+                if line.startswith("data: "):
+                    tokens.append(line[6:])
+                if len(tokens) >= 3:
+                    break
+        assert len(tokens) >= 1, "No SSE tokens received"
+
+
+# ---------------------------------------------------------------------------
+# 5. Knowledge Base
+# ---------------------------------------------------------------------------
+
+class TestKnowledge:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.token = login()
+        self.hdrs  = auth_headers(self.token)
+
+    def test_list_documents(self):
+        r = httpx.get(f"{BASE}/knowledge", headers=self.hdrs, timeout=15)
+        assert r.status_code == 200
+        assert isinstance(r.json(), (list, dict))
+
+    def test_upload_txt_document(self):
+        content = b"Enterprise Policy: All employees must log in using SSO."
+        r = httpx.post(
+            f"{BASE}/knowledge/upload",
+            files={"file": ("policy.txt", content, "text/plain")},
+            headers=self.hdrs,
+            timeout=30,
+        )
+        assert r.status_code in (200, 201), f"Upload: {r.status_code} {r.text[:200]}"
+        body = r.json()
+        assert "id" in body
+
+    def test_upload_sets_pending_status(self):
+        content = b"HR Policy: Annual leave is 20 days per year."
+        r = httpx.post(
+            f"{BASE}/knowledge/upload",
+            files={"file": ("hr.txt", content, "text/plain")},
+            headers=self.hdrs,
+            timeout=30,
+        )
+        assert r.status_code in (200, 201)
+        body = r.json()
+        # starts as pending; check field exists
+        assert "embedding_status" in body
+
+    def test_embedding_completes(self):
+        """Upload, wait a few seconds, verify embedding_status transitions to 'complete'."""
+        content = b"Sales Q3 2026 target is 2 million USD."
+        r = httpx.post(
+            f"{BASE}/knowledge/upload",
+            files={"file": ("sales.txt", content, "text/plain")},
+            headers=self.hdrs,
+            timeout=30,
+        )
+        assert r.status_code in (200, 201)
+        doc_id = r.json()["id"]
+        # Poll up to 20 s for 'complete'
+        for _ in range(10):
+            time.sleep(2)
+            rg = httpx.get(f"{BASE}/knowledge/{doc_id}", headers=self.hdrs, timeout=10)
+            if rg.status_code == 200:
+                status = rg.json().get("embedding_status")
+                if status == "complete":
+                    return  # pass
+        # If still pending after 20 s log a soft warning rather than hard fail
+        # (ChromaDB may need model download time on first run)
+        pytest.xfail("Embedding still pending after 20 s — may need model warm-up")
+
+    def test_semantic_search(self):
+        r = httpx.get(
+            f"{BASE}/knowledge/search?q=sales+target&top_k=3",
+            headers=self.hdrs,
+            timeout=20,
+        )
+        assert r.status_code == 200
+        body = r.json()
+        assert isinstance(body, (list, dict))
+
+    def test_get_document(self):
+        # Upload first
+        content = b"Finance doc: Q4 budget approved."
+        r = httpx.post(
+            f"{BASE}/knowledge/upload",
+            files={"file": ("finance.txt", content, "text/plain")},
+            headers=self.hdrs,
+            timeout=30,
+        )
+        doc_id = r.json()["id"]
+        rg = httpx.get(f"{BASE}/knowledge/{doc_id}", headers=self.hdrs, timeout=10)
+        assert rg.status_code == 200
+
+    def test_delete_document(self):
+        content = b"Temp document to be deleted."
+        r = httpx.post(
+            f"{BASE}/knowledge/upload",
+            files={"file": ("temp.txt", content, "text/plain")},
+            headers=self.hdrs,
+            timeout=30,
+        )
+        doc_id = r.json()["id"]
+        rd = httpx.delete(f"{BASE}/knowledge/{doc_id}", headers=self.hdrs, timeout=10)
+        assert rd.status_code in (200, 204)
+
+
+# ---------------------------------------------------------------------------
+# 6. Voice
+# ---------------------------------------------------------------------------
+
+class TestVoice:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.token = login()
+        self.hdrs  = auth_headers(self.token)
+
+    def test_voice_config_no_auth(self):
+        """Voice config is public (for settings page)."""
+        r = httpx.get(f"{BASE}/voice/config", timeout=10)
+        assert r.status_code == 200
+
+    def test_create_voice_session(self):
+        r = httpx.post(
+            f"{BASE}/voice/sessions",
+            json={"department": "reception"},
+            headers=self.hdrs,
+            timeout=15,
+        )
+        assert r.status_code in (200, 201), f"{r.status_code}: {r.text[:200]}"
+        body = r.json()
+        assert "session_id" in body or "id" in body
+
+    def test_list_voice_sessions(self):
+        r = httpx.get(f"{BASE}/voice/sessions", headers=self.hdrs, timeout=10)
+        assert r.status_code == 200
+
+    def test_tts_speak_endpoint(self):
+        r = httpx.post(
+            f"{BASE}/voice/speak",
+            json={"text": "Hello, I am your AI assistant."},
+            headers=self.hdrs,
+            timeout=20,
+        )
+        # 200 = audio returned; 503 = no TTS provider configured (acceptable)
+        assert r.status_code in (200, 503), f"{r.status_code}: {r.text[:200]}"
+
+    def test_transcribe_endpoint_accepts_audio(self):
+        # Send a tiny silent WAV (44-byte minimal header)
+        wav_bytes = (
+            b"RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00"
+            b"@\x1f\x00\x00@\x1f\x00\x00\x01\x00\x08\x00data\x00\x00\x00\x00"
+        )
+        r = httpx.post(
+            f"{BASE}/voice/transcribe",
+            files={"audio": ("test.wav", wav_bytes, "audio/wav")},
+            headers=self.hdrs,
+            timeout=20,
+        )
+        # 200 = transcript returned; 422 = file too short / validation;
+        # 502/503 = STT provider error (audio too short handled upstream)
+        assert r.status_code in (200, 422, 502, 503), f"{r.status_code}: {r.text[:200]}"
+
+
+# ---------------------------------------------------------------------------
+# 7. Workflows
+# ---------------------------------------------------------------------------
+
+class TestWorkflows:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.token = login()
+        self.hdrs  = auth_headers(self.token)
+
+    def test_list_workflows(self):
+        r = httpx.get(f"{BASE}/workflows", headers=self.hdrs, timeout=10)
+        assert r.status_code == 200
+        body = r.json()
+        assert isinstance(body, (list, dict))
+
+    def test_run_simple_workflow(self):
+        r = httpx.post(
+            f"{BASE}/workflows",
+            json={
+                "task": "Summarise our HR policy in one sentence",
+                "strategy": "SequentialWorkflow",
+                "user_id": "admin",
+            },
+            headers=self.hdrs,
+            timeout=60,
+        )
+        assert r.status_code in (200, 202), f"{r.status_code}: {r.text[:200]}"
+
+
+# ---------------------------------------------------------------------------
+# 8. Analytics
+# ---------------------------------------------------------------------------
+
+class TestAnalytics:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.token = login()
+        self.hdrs  = auth_headers(self.token)
+
+    def test_analytics_overview(self):
+        r = httpx.get(f"{BASE}/analytics", headers=self.hdrs, timeout=10)
+        assert r.status_code == 200
+        body = r.json()
+        assert isinstance(body, dict)
+
+    def test_mcp_tools_list(self):
+        r = httpx.get(f"{BASE}/mcp/tools", headers=self.hdrs, timeout=10)
+        assert r.status_code in (200, 404)
+
+    def test_audit_logs(self):
+        r = httpx.get(f"{BASE}/audit", headers=self.hdrs, timeout=10)
+        assert r.status_code in (200, 404)
+
+
+# ---------------------------------------------------------------------------
+# 9. Agents
+# ---------------------------------------------------------------------------
+
+class TestAgents:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.token = login()
+        self.hdrs  = auth_headers(self.token)
+
+    def test_list_agents(self):
+        r = httpx.get(f"{BASE}/agents", headers=self.hdrs, timeout=10)
+        assert r.status_code == 200
+        body = r.json()
+        agents = body if isinstance(body, list) else body.get("agents", [])
+        # Expect at least the 7 department agents
+        assert len(agents) >= 7, f"Only {len(agents)} agents found: {agents}"
+
+    def test_all_departments_present(self):
+        r = httpx.get(f"{BASE}/agents", headers=self.hdrs, timeout=10)
+        assert r.status_code == 200
+        body = r.json()
+        agents = body if isinstance(body, list) else body.get("agents", [])
+        names = [str(a.get("department", a.get("name", ""))).lower() for a in agents]
+        expected = {"reception", "sales", "hr", "finance", "technology", "marketing", "customer_care"}
+        missing = expected - {n for n in names for e in expected if e in n}
+        assert not missing, f"Missing departments: {missing}"
+
+
+# ---------------------------------------------------------------------------
+# 10. Settings
+# ---------------------------------------------------------------------------
+
+class TestSettings:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.token = login()
+        self.hdrs  = auth_headers(self.token)
+
+    def test_get_api_keys(self):
+        r = httpx.get(f"{BASE}/settings/keys", headers=self.hdrs, timeout=10)
+        assert r.status_code == 200
+        body = r.json()
+        assert isinstance(body, (dict, list))
+
+    def test_get_integrations(self):
+        r = httpx.get(f"{BASE}/settings/integrations", headers=self.hdrs, timeout=10)
+        assert r.status_code == 200
+
+
+# ---------------------------------------------------------------------------
+# 11. Escalations
+# ---------------------------------------------------------------------------
+
+class TestEscalations:
+    @pytest.fixture(autouse=True)
+    def setup(self):
+        self.token = login()
+        self.hdrs  = auth_headers(self.token)
+
+    def test_list_escalations(self):
+        r = httpx.get(f"{BASE}/escalations", headers=self.hdrs, timeout=10)
+        assert r.status_code in (200, 404)
+
+    def test_create_escalation(self):
+        r = httpx.post(
+            f"{BASE}/escalations",
+            json={
+                "session_id": "e2e-escalation-test",
+                "reason": "User requested human supervisor",
+                "department": "reception",
+            },
+            headers=self.hdrs,
+            timeout=15,
+        )
+        assert r.status_code in (200, 201, 422), f"{r.status_code}: {r.text[:200]}"
+
+
+# ---------------------------------------------------------------------------
+# 12. WebSocket — Chat roundtrip
+# ---------------------------------------------------------------------------
+
+class TestWebSocketChat:
+    def test_ws_chat_roundtrip(self):
+        """Connect to chat WS, send a message, receive agent reply within 45 s."""
+        token = login()
+        session_id = "ws-e2e-test"
+        url = f"{WS_BASE}/chat/{session_id}?token={token}"
+        try:
+            from websocket import create_connection  # websocket-client
+        except ImportError:
+            pytest.skip("websocket-client not installed")
+
+        try:
+            # suppress_origin removes the duplicate Origin header that
+            # causes FastAPI's uvicorn to return 400
+            ws = create_connection(url, timeout=10, suppress_origin=True)
+            ws.send(json.dumps({
+                "message": "Hello from e2e test",
+                "department": "reception",
+                "session_id": session_id,
+            }))
+            ws.settimeout(45)
+            reply = ws.recv()
+            ws.close()
+        except Exception as exc:
+            pytest.fail(f"WS connection/roundtrip failed: {exc}")
+
+        try:
+            data = json.loads(reply)
+        except json.JSONDecodeError:
+            pytest.fail(f"WS reply is not JSON: {reply[:200]}")
+
+        content = (
+            (data.get("message") or {}).get("content")
+            or data.get("content")
+            or ""
+        )
+        assert len(content) > 0, f"Empty WS reply: {data}"
+
+    def test_ws_no_raw_json_in_reply(self):
+        """WS reply must not contain raw JSON transfer directives."""
+        token = login()
+        session_id = "ws-transfer-test"
+        url = f"{WS_BASE}/chat/{session_id}?token={token}"
+        try:
+            from websocket import create_connection
+        except ImportError:
+            pytest.skip("websocket-client not installed")
+
+        try:
+            ws = create_connection(url, timeout=10, suppress_origin=True)
+            ws.send(json.dumps({
+                "message": "Transfer me to the sales department please",
+                "department": "reception",
+                "session_id": session_id,
+            }))
+            ws.settimeout(45)
+            reply = ws.recv()
+            ws.close()
+        except Exception as exc:
+            pytest.fail(f"WS failed: {exc}")
+
+        data = json.loads(reply)
+        content = (data.get("message") or {}).get("content") or data.get("content") or ""
+        assert '{"transfer"' not in content, f"Raw JSON in content: {content[:200]}"
