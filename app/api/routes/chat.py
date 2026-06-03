@@ -120,6 +120,29 @@ async def chat_stream(
         yield _sse({"type": "typing"})
         await asyncio.sleep(0)
         try:
+            # Deterministic transfer handling: if the user explicitly asks to be
+            # transferred, route through the full handler so the response carries
+            # ``transferred_to`` and a clean handoff phrase (the raw token stream
+            # cannot express a transfer).
+            from app.voice.session import detect_transfer_intent
+
+            intent = detect_transfer_intent(request.message)
+            if intent is not None and intent != request.department:
+                resp = await chat_service().handle(request)
+                content = resp.message.content or ""
+                yield _sse({"type": "token", "token": content})
+                transferred = (
+                    resp.transferred_to.value
+                    if hasattr(resp.transferred_to, "value")
+                    else resp.transferred_to
+                )
+                yield _sse({
+                    "type": "done",
+                    "response": {"message": {"content": content}},
+                    "transferred_to": transferred,
+                })
+                return
+
             full_text = ""
             async for token in stream_chat_tokens(request):
                 full_text += token

@@ -415,6 +415,23 @@ export default function ChatPage() {
                       prev.map((m) => (m.id === streamingId ? { ...m, content: finalText } : m))
                     );
                   }
+                  // Handle agent-initiated department transfer (SSE path)
+                  const transferredTo: string | null =
+                    evt.transferred_to ?? evt.transferredTo ?? null;
+                  if (transferredTo && DEPARTMENTS.some((d) => d.id === transferredTo)) {
+                    const targetDept = getDept(transferredTo);
+                    setMessages((prev) => [
+                      ...prev,
+                      {
+                        id: genId(),
+                        role: "assistant",
+                        content: `Transferring you to the **${targetDept.label}** department…`,
+                        timestamp: new Date(),
+                        dept: deptId,
+                      },
+                    ]);
+                    setDeptId(transferredTo);
+                  }
                 } else if (evt.type === "error") {
                   setTyping(false);
                   setMessages((prev) => [

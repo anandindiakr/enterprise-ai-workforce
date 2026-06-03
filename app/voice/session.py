@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import time
 from dataclasses import dataclass, field
 from typing import Any
@@ -186,16 +187,85 @@ class VoiceSessionManager:
 # ---------------------------------------------------------------------------
 
 
+# Matches embedded/fenced JSON control directives anywhere in the text, e.g.
+#   {"transfer": "sales"}   or   {"escalate": "supervisor"}
+_JSON_DIRECTIVE_RE = re.compile(
+    r'\{\s*"(?:transfer|escalate)"\s*:\s*"[^"]+"\s*\}'
+)
+
+# Prose leak patterns the LLM sometimes emits instead of/alongside JSON, e.g.
+#   "User requested to transfer to sales department!"
+#   "Transferring you to the finance team."
+_PROSE_TRANSFER_RE = re.compile(
+    r'(?:transfer(?:ring)?|connect(?:ing)?|routing|redirect(?:ing)?|hand(?:ing)?\s+off)'
+    r'[^.\n]*?\bto\b[^.\n]*?\b(reception|customer[\s_]?care|sales|hr|human\s+resources?|'
+    r'finance|billing|accounting|technolog\w*|tech(?:nical)?\s+support|it\s+support|'
+    r'marketing)\b',
+    re.IGNORECASE,
+)
+
+# Department keyword synonyms used by both the prose detector and the
+# deterministic user-intent detector.
+_DEPT_SYNONYMS: tuple[tuple[Department, tuple[str, ...]], ...] = (
+    (Department.SALES, ("sales", "pricing", "purchase", "buy a", "quote")),
+    (Department.HR, ("human resources", "human resource", " hr ", "hr department",
+                     "recruit", "hiring", "payroll", "benefits")),
+    (Department.FINANCE, ("finance", "billing", "invoice", "accounting",
+                          "refund", "payment")),
+    (Department.TECHNOLOGY, ("technology", "tech support", "technical support",
+                             "it support", "it department", "engineer")),
+    (Department.MARKETING, ("marketing", "campaign", "branding", "social media")),
+    (Department.CUSTOMER_CARE, ("customer care", "customer service",
+                                "customer support", "complaint")),
+    (Department.RECEPTION, ("reception", "receptionist", "front desk", "operator")),
+)
+
+# Explicit transfer-request triggers in a *user* utterance.
+_TRANSFER_TRIGGERS: tuple[str, ...] = (
+    "transfer", "connect me", "connect to", "route me", "speak to", "speak with",
+    "talk to", "talk with", "put me through", "switch me", "redirect", "hand me",
+    "i want to talk", "i need to speak", "i want to speak", "get me", "reach the",
+    "can you connect", "send me to",
+)
+
+
+def _match_department(text: str) -> Department | None:
+    """Resolve a department from free-form text using keyword synonyms."""
+    lowered = f" {text.lower()} "
+    for dept, needles in _DEPT_SYNONYMS:
+        if any(n in lowered for n in needles):
+            return dept
+    return None
+
+
+def detect_transfer_intent(user_text: str) -> Department | None:
+    """Deterministically detect an explicit transfer request in a *user* message.
+
+    This does not rely on the LLM emitting a JSON directive; it recognises
+    natural phrasing such as "transfer me to sales" or "I want to talk to HR".
+    Returns the target :class:`Department` or ``None``.
+    """
+    if not user_text:
+        return None
+    lowered = user_text.lower()
+    if not any(trigger in lowered for trigger in _TRANSFER_TRIGGERS):
+        return None
+    return _match_department(user_text)
+
+
 def _detect_control_signals(text: str) -> tuple[EscalationLevel, Department | None]:
-    """Look for ``{"transfer": ...}`` / ``{"escalate": ...}`` JSON directives."""
+    """Detect ``transfer`` / ``escalate`` directives from agent output.
+
+    Handles bare JSON lines, JSON embedded inside prose or markdown fences,
+    and natural-language prose leaks the LLM occasionally produces.
+    """
     escalation = EscalationLevel.NONE
     transfer: Department | None = None
-    for line in text.splitlines():
-        line = line.strip()
-        if not (line.startswith("{") and line.endswith("}")):
-            continue
+
+    # 1) JSON directives anywhere in the text (line-based or embedded).
+    for match in _JSON_DIRECTIVE_RE.finditer(text):
         try:
-            payload = json.loads(line)
+            payload = json.loads(match.group(0))
         except Exception:
             continue
         if "escalate" in payload:
@@ -208,25 +278,45 @@ def _detect_control_signals(text: str) -> tuple[EscalationLevel, Department | No
                 transfer = Department(payload["transfer"])
             except Exception:
                 transfer = None
+
+    # 2) Prose leak fallback ("transferring you to the sales team").
+    if transfer is None:
+        prose = _PROSE_TRANSFER_RE.search(text)
+        if prose:
+            transfer = _match_department(prose.group(1))
+
     return escalation, transfer
 
 
 def _strip_control_signals(text: str) -> str:
-    """Remove JSON control-signal lines from agent text before display or TTS.
+    """Remove control directives from agent text before display or TTS.
 
-    Lines that are bare JSON objects containing ``transfer`` or ``escalate``
-    keys are silently dropped so they are never shown to the user.
+    Removes bare JSON directive lines, embedded/fenced JSON directives, and
+    prose transfer leaks so none of them are ever shown or spoken to the user.
     """
+    # Drop embedded JSON directives anywhere in the text.
+    text = _JSON_DIRECTIVE_RE.sub("", text)
+
     clean = []
     for line in text.splitlines():
         stripped = line.strip()
+        if not stripped:
+            clean.append(line)
+            continue
+        # Bare JSON directive line.
         if stripped.startswith("{") and stripped.endswith("}"):
             try:
                 payload = json.loads(stripped)
                 if "transfer" in payload or "escalate" in payload:
-                    continue  # swallow control directive
+                    continue
             except Exception:
                 pass
+        # Markdown code-fence wrappers around stripped JSON become empty.
+        if stripped in ("```", "```json"):
+            continue
+        # Prose transfer leak line.
+        if _PROSE_TRANSFER_RE.search(stripped):
+            continue
         clean.append(line)
     return "\n".join(clean).strip()
 

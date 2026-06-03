@@ -23,7 +23,11 @@ from app.telemetry.metrics import (
     chat_requests_total,
     escalations_total,
 )
-from app.voice.session import _detect_control_signals, _strip_control_signals
+from app.voice.session import (
+    _detect_control_signals,
+    _strip_control_signals,
+    detect_transfer_intent,
+)
 
 # Swarms agent.run() returns the raw conversation accumulation:
 #   {task}\n[{tool_calls_json}]\nFunction '{name}' result:\n{json}\n{response}
@@ -90,6 +94,15 @@ class ChatService:
             text = _extract_agent_text(str(wf.output) if wf.output is not None else "", task=request.message)
             escalation, transferred = _detect_control_signals(text)
             text = _strip_control_signals(text)  # remove JSON directives before display
+
+            # Deterministic fallback: honour an explicit transfer request in the
+            # *user* message even when the LLM never emitted a control directive.
+            if transferred is None:
+                intent = detect_transfer_intent(request.message)
+                if intent is not None and intent != department:
+                    transferred = intent
+                    text = ""  # force the natural handoff phrase below
+
             if escalation != EscalationLevel.NONE:
                 escalations_total.labels(department.value, escalation.value).inc()
             final_dept = transferred or department

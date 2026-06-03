@@ -287,9 +287,41 @@ async def _process_utterance(
     await ws.send_json({"type": "transcript", "text": transcript, "is_final": True})
 
     # 2. Agent
-    dept      = str(getattr(session, "department", "reception"))
+    # NOTE: Department is a (str, Enum); str(Department.RECEPTION) -> "Department.RECEPTION".
+    # We must use .value ("reception") so ChatRequest enum validation passes.
+    _dept_raw = getattr(session, "department", "reception")
+    dept      = _dept_raw.value if hasattr(_dept_raw, "value") else str(_dept_raw)
     user_id   = str(getattr(session, "user_id",   "voice-user"))
     tenant_id = str(getattr(session, "tenant_id", "default"))
+
+    async def _emit(text: str, dept_for_voice: str, *, strip: bool = True) -> None:
+        """Send an agent message + its TTS audio to the client.
+
+        `strip` removes control-signal / prose-transfer leaks from LLM output.
+        Set strip=False for trusted fixed phrases (e.g. the handoff line, which
+        otherwise trips the prose-transfer filter).
+        """
+        if strip:
+            text = _strip_control_signals(text)
+        text = (text or "").strip() or "I'm here to help. How can I assist you?"
+        await ws.send_json({"type": "agent", "text": text, "department": dept_for_voice})
+        try:
+            audio_mp3, provider = await _tts(text)
+            await ws.send_json({
+                "type":     "audio",
+                "data":     base64.b64encode(audio_mp3).decode(),
+                "provider": provider,
+                "mime":     "audio/mpeg",
+            })
+        except Exception as exc:  # noqa: BLE001
+            await ws.send_json({"type": "error", "message": f"TTS: {exc}"})
+
+    dept_labels = {
+        "reception": "Reception", "customer_care": "Customer Care",
+        "sales": "Sales", "hr": "HR", "finance": "Finance",
+        "technology": "Technology", "marketing": "Marketing",
+    }
+
     try:
         chat_resp = await chat_service().handle(
             ChatRequest(
@@ -302,49 +334,46 @@ async def _process_utterance(
         )
         reply_text = chat_resp.message.content or ""
 
-        # --- Handle department transfer silently (before TTS) ---------------
+        # --- Department transfer: hand off, switch, then let the new dept speak --
         if chat_resp.transferred_to:
             new_dept = chat_resp.transferred_to
             dept_name = new_dept.value if hasattr(new_dept, "value") else str(new_dept)
-            # Update session department so the next turn uses the new dept
             try:
                 from app.core.types import Department as _Dept
                 session.department = _Dept(dept_name)  # type: ignore[attr-defined]
             except Exception:
                 pass
-            dept = dept_name
-            # Emit a transfer event so the frontend can update its UI
             await ws.send_json({"type": "transfer", "department": dept_name})
-            # Replace the TTS reply with a natural handoff phrase
-            dept_labels = {
-                "reception": "Reception", "customer_care": "Customer Care",
-                "sales": "Sales", "hr": "HR", "finance": "Finance",
-                "technology": "Technology", "marketing": "Marketing",
-            }
             label = dept_labels.get(dept_name, dept_name.replace("_", " ").title())
-            reply_text = f"I'm connecting you to our {label} team now. One moment please."
 
-        # Strip any remaining control-signal JSON that should not be spoken
-        reply_text = _strip_control_signals(reply_text)
-        if not reply_text:
-            reply_text = "I'm here to help. How can I assist you?"
+            # 1) Spoken handoff from the current agent.
+            await _emit(f"I'm connecting you to our {label} team now. One moment please.", dept, strip=False)
+
+            # 2) New department picks up the SAME request and responds out loud,
+            #    carrying the conversation context (same session_id).
+            try:
+                followup = await chat_service().handle(
+                    ChatRequest(
+                        message=transcript,
+                        department=dept_name,
+                        session_id=session_id,
+                        user_id=user_id,
+                        tenant_id=tenant_id,
+                    )
+                )
+                new_reply = followup.message.content or ""
+            except Exception:  # noqa: BLE001
+                new_reply = ""
+            if not new_reply.strip():
+                new_reply = f"Hi, this is {label}. How can I help you?"
+            await _emit(new_reply, dept_name)
+            return
+
+        await _emit(reply_text, dept)
 
     except Exception as exc:  # noqa: BLE001
-        reply_text = "I'm sorry, I encountered an error. Please try again."
         await ws.send_json({"type": "error", "message": str(exc)})
-    await ws.send_json({"type": "agent", "text": reply_text, "department": dept})
-
-    # 3. TTS
-    try:
-        audio_mp3, provider = await _tts(reply_text)
-        await ws.send_json({
-            "type":     "audio",
-            "data":     base64.b64encode(audio_mp3).decode(),
-            "provider": provider,
-            "mime":     "audio/mpeg",
-        })
-    except Exception as exc:  # noqa: BLE001
-        await ws.send_json({"type": "error", "message": f"TTS: {exc}"})
+        await _emit("I'm sorry, I encountered an error. Please try again.", dept)
 
 
 async def _process_twilio_utterance(
@@ -358,7 +387,8 @@ async def _process_twilio_utterance(
     if not transcript:
         return
 
-    dept      = str(getattr(session, "department", "reception"))
+    _dept_raw = getattr(session, "department", "reception")
+    dept      = _dept_raw.value if hasattr(_dept_raw, "value") else str(_dept_raw)
     user_id   = str(getattr(session, "user_id",   "twilio-caller"))
     tenant_id = str(getattr(session, "tenant_id", "default"))
     try:

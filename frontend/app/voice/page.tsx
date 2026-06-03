@@ -76,6 +76,8 @@ export default function VoicePage() {
   const vadRef              = useRef<BrowserVAD | null>(null);
   const wsRef               = useRef<WebSocket | null>(null);
   const wsAudioCtxRef       = useRef<AudioContext | null>(null);
+  const audioQueueRef       = useRef<string[]>([]);   // FIFO of object URLs
+  const audioPlayingRef     = useRef<boolean>(false);
 
   const dept = getDept(deptId);
   const Icon = dept.icon;
@@ -281,6 +283,77 @@ export default function VoicePage() {
     _processBlob(blob);
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+  /** Speak `text` with the given department voice; resolves when playback ends. */
+  const _speak = useCallback(async (text: string, dept: string) => {
+    const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+    setVoiceState("speaking");
+    try {
+      const ttsRes = await fetch(`${base}/api/v1/voice/speak/stream`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ text, department: dept }),
+      });
+      if (!ttsRes.ok) return;
+      const audioBlob = await ttsRes.blob();
+      const url = URL.createObjectURL(audioBlob);
+      const audio = new Audio(url);
+      await new Promise<void>((resolve) => {
+        audio.onended = () => { URL.revokeObjectURL(url); resolve(); };
+        audio.onerror = () => { URL.revokeObjectURL(url); resolve(); };
+        audio.play().catch(() => resolve());
+      });
+    } catch { /* ignore TTS failure */ }
+  }, []);
+
+  /**
+   * Run one agent turn for `userText` against `fromDept`.
+   * If the agent routes the conversation elsewhere, play the handoff phrase,
+   * switch departments, and let the NEW department actually respond out loud
+   * (so e.g. HR greets and continues the conversation after a transfer).
+   * `depth` guards against transfer loops.
+   */
+  const _agentTurn = useCallback(async (userText: string, fromDept: string, depth = 0) => {
+    const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+    try {
+      const chatRes = await fetch(`${base}/api/v1/chat`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ message: userText, department: fromDept, session_id: sessionId }),
+      });
+      const chatData = await chatRes.json();
+
+      const transferredTo: string | null =
+        chatData?.transferred_to ?? chatData?.transferredTo ?? null;
+      const isTransfer = !!(
+        transferredTo &&
+        transferredTo !== fromDept &&
+        depth < 2 &&
+        DEPARTMENTS.some((d) => d.id === transferredTo)
+      );
+
+      if (isTransfer) {
+        const target = transferredTo as string;
+        const label  = DEPARTMENTS.find((d) => d.id === target)?.label ?? target;
+        _appendLine("agent", `[ Transferred to ${label} ]`);
+        setDeptId(target);
+        // 1) Spoken handoff from the current agent.
+        await _speak(`I'm connecting you to our ${label} team now. One moment please.`, fromDept);
+        // 2) New department picks up the SAME request and actually responds out loud.
+        await _agentTurn(userText, target, depth + 1);
+        return;
+      }
+
+      const reply =
+        chatData?.message?.content ?? chatData?.response ?? "I processed your request.";
+      _appendLine("agent", reply);
+      await _speak(reply, fromDept);
+    } catch {
+      _appendLine("agent", "⚠️ Could not reach the API.");
+    } finally {
+      setVoiceState("idle");
+    }
+  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+
   const _processBlob = useCallback((blob: Blob) => {
     if (blob.size < 1000) { setVoiceState("idle"); return; }
     const base     = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
@@ -297,37 +370,14 @@ export default function VoicePage() {
       .then(async (data: any) => {
         const text = data.transcript ?? "Could not transcribe.";
         _updateLine(phId, text);
-        const chatRes = await fetch(`${base}/api/v1/chat`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
-          body: JSON.stringify({ message: text, department: deptId, session_id: sessionId }),
-        });
-        const chatData = await chatRes.json();
-        const reply = chatData?.message?.content ?? chatData?.response ?? "I processed your request.";
-        setVoiceState("speaking");
-        _appendLine("agent", reply);
-        // TTS via streaming endpoint
-        const ttsRes = await fetch(`${base}/api/v1/voice/speak/stream`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
-          body: JSON.stringify({ text: reply, department: deptId }),
-        });
-        if (ttsRes.ok) {
-          const audioBlob = await ttsRes.blob();
-          const url = URL.createObjectURL(audioBlob);
-          const audio = new Audio(url);
-          audio.onended = () => { setVoiceState("idle"); URL.revokeObjectURL(url); };
-          audio.onerror = () => setVoiceState("idle");
-          await audio.play().catch(() => setVoiceState("idle"));
-        } else {
-          setTimeout(() => setVoiceState("idle"), 1500);
-        }
+        setVoiceState("processing");
+        await _agentTurn(text, deptId);
       })
       .catch(() => {
         _updateLine(phId, "⚠️ Could not reach the API.");
         setVoiceState("idle");
       });
-  }, [deptId, sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [deptId, sessionId, _agentTurn]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Helpers ─────────────────────────────────────────────── */
 
@@ -341,15 +391,31 @@ export default function VoicePage() {
     setTranscript((p) => p.map((l) => l.id === id ? { ...l, text } : l));
   }
 
+  /** Play queued audio clips strictly one after another (no overlap). */
+  function _drainAudioQueue() {
+    if (audioPlayingRef.current) return;
+    const url = audioQueueRef.current.shift();
+    if (!url) { setVoiceState("idle"); return; }
+    audioPlayingRef.current = true;
+    setVoiceState("speaking");
+    const audio = new Audio(url);
+    const next = () => {
+      URL.revokeObjectURL(url);
+      audioPlayingRef.current = false;
+      _drainAudioQueue();          // play the next clip, if any
+    };
+    audio.onended = next;
+    audio.onerror = next;
+    audio.play().catch(next);
+  }
+
   function _playBase64Audio(b64: string, mime: string) {
     try {
-      const bytes  = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
-      const blob   = new Blob([bytes], { type: mime });
-      const url    = URL.createObjectURL(blob);
-      const audio  = new Audio(url);
-      audio.onended = () => { setVoiceState("idle"); URL.revokeObjectURL(url); };
-      audio.onerror = () => setVoiceState("idle");
-      audio.play().catch(() => setVoiceState("idle"));
+      const bytes = Uint8Array.from(atob(b64), (c) => c.charCodeAt(0));
+      const blob  = new Blob([bytes], { type: mime });
+      const url   = URL.createObjectURL(blob);
+      audioQueueRef.current.push(url);   // enqueue; play sequentially
+      _drainAudioQueue();
     } catch { setVoiceState("idle"); }
   }
 
