@@ -20,6 +20,9 @@ import {
   Info,
   Zap,
   Download,
+  History,
+  ArrowRightLeft,
+  Plus,
 } from "lucide-react";
 import { formatTime } from "@/lib/utils";
 
@@ -138,8 +141,9 @@ export default function ChatPage() {
   const [typing, setTyping] = useState(false);
   const [uploadedFile, setUploadedFile] = useState<UploadedFile | null>(null);
   const [uploading, setUploading] = useState(false);
-  // Generate sessionId client-side only to avoid SSR hydration mismatch
   const [sessionId, setSessionId] = useState("");
+  const [pastSessions, setPastSessions] = useState<{id:string;department:string;title:string|null;created_at:string}[]>([]);
+  const [showHistory, setShowHistory] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -259,6 +263,46 @@ export default function ChatPage() {
     connect();
     return () => wsRef.current?.close();
   }, [connect]);
+
+  /* Fetch past sessions */
+  const fetchHistory = useCallback(async () => {
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+    try {
+      const res = await fetch(`${apiBase}/api/v1/chat/sessions?limit=20`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      const list = Array.isArray(data) ? data : (data.sessions ?? []);
+      setPastSessions(list);
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { fetchHistory(); }, [fetchHistory]);
+
+  /* Load a past session */
+  const loadSession = useCallback(async (sid: string, dept: string) => {
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+    try {
+      const res = await fetch(`${apiBase}/api/v1/chat/sessions/${sid}`, {
+        headers: authHeaders(),
+      });
+      if (!res.ok) return;
+      const data = await res.json();
+      setDeptId(dept);
+      setSessionId(sid);
+      setMessages(
+        (data.messages ?? []).map((m: {id:string;role:string;content:string;department:string;created_at:string}) => ({
+          id: m.id,
+          role: m.role as Role,
+          content: m.content,
+          timestamp: new Date(m.created_at),
+          dept: m.department,
+        }))
+      );
+      setShowHistory(false);
+    } catch { /* ignore */ }
+  }, []);
 
   /* Send message */
   const sendMessage = useCallback(() => {
@@ -403,27 +447,69 @@ export default function ChatPage() {
 
         {/* Dept list */}
         <div className="flex-1 overflow-y-auto px-2 py-3">
-          <p className="mb-2 px-2 font-mono text-[10px] uppercase tracking-widest text-slate-600">
-            Department
-          </p>
-          {DEPARTMENTS.map((d) => {
-            const DIcon = d.icon;
-            const active = d.id === deptId;
-            return (
-              <button
-                key={d.id}
-                onClick={() => setDeptId(d.id)}
-                className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-all ${
-                  active
-                    ? `${d.colorBg} ${d.colorText} border ${d.colorBorder}`
-                    : "text-slate-500 hover:bg-[#111827] hover:text-slate-300"
-                }`}
-              >
-                <DIcon className="h-3.5 w-3.5 flex-shrink-0" />
-                <span className="truncate">{d.label}</span>
-              </button>
-            );
-          })}
+          <div className="mb-2 flex items-center justify-between px-2">
+            <p className="font-mono text-[10px] uppercase tracking-widest text-slate-600">
+              Department
+            </p>
+            <button
+              onClick={() => { setShowHistory(!showHistory); if (!showHistory) fetchHistory(); }}
+              className={`rounded p-0.5 transition-colors ${showHistory ? "text-violet-400" : "text-slate-500 hover:text-slate-300"}`}
+              title="Chat history"
+            >
+              <History className="h-3.5 w-3.5" />
+            </button>
+          </div>
+
+          {showHistory ? (
+            <div>
+              <div className="mb-1 flex items-center justify-between px-1">
+                <span className="text-[10px] text-slate-500 uppercase tracking-widest">Recent sessions</span>
+                <button
+                  onClick={() => { setShowHistory(false); setSessionId(genId()); setMessages([{id:genId(),role:"assistant",content:getDept(deptId).greeting,timestamp:new Date(),dept:deptId}]); }}
+                  className="text-[10px] text-violet-400 hover:text-violet-300 flex items-center gap-0.5"
+                >
+                  <Plus className="h-3 w-3" /> New
+                </button>
+              </div>
+              {pastSessions.length === 0 ? (
+                <p className="text-[11px] text-slate-600 px-2 py-4 text-center">No past sessions</p>
+              ) : (
+                pastSessions.map((s) => {
+                  const d = getDept(s.department);
+                  return (
+                    <button
+                      key={s.id}
+                      onClick={() => loadSession(s.id, s.department)}
+                      className="w-full text-left rounded-lg px-2 py-2 mb-0.5 hover:bg-[#111827] transition-colors"
+                    >
+                      <p className={`text-[11px] font-medium truncate ${d.colorText}`}>{d.label}</p>
+                      <p className="text-[10px] text-slate-500 truncate">{s.title ?? s.id.slice(0,8)}</p>
+                      <p className="text-[9px] text-slate-600 mt-0.5">{new Date(s.created_at).toLocaleDateString()}</p>
+                    </button>
+                  );
+                })
+              )}
+            </div>
+          ) : (
+            DEPARTMENTS.map((d) => {
+              const DIcon = d.icon;
+              const active = d.id === deptId;
+              return (
+                <button
+                  key={d.id}
+                  onClick={() => setDeptId(d.id)}
+                  className={`flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-left text-xs transition-all ${
+                    active
+                      ? `${d.colorBg} ${d.colorText} border ${d.colorBorder}`
+                      : "text-slate-500 hover:bg-[#111827] hover:text-slate-300"
+                  }`}
+                >
+                  <DIcon className="h-3.5 w-3.5 flex-shrink-0" />
+                  <span className="truncate">{d.label}</span>
+                </button>
+              );
+            })
+          )}
         </div>
 
         {/* Session info */}
@@ -472,6 +558,28 @@ export default function ChatPage() {
             </div>
           </div>
           <div className="flex items-center gap-3">
+            {/* Agent Handoff dropdown */}
+            <div className="relative group">
+              <button className="flex items-center gap-1.5 rounded-lg border border-[#1f2937] px-3 py-1.5 text-xs text-slate-400 transition-all hover:border-[#374151] hover:text-slate-200">
+                <ArrowRightLeft className="h-3 w-3" /> Transfer
+              </button>
+              <div className="absolute right-0 top-full mt-1 w-44 rounded-lg border border-[#1f2937] bg-[#0a0f1a] shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+                <p className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-slate-600">Transfer to</p>
+                {DEPARTMENTS.filter((d) => d.id !== deptId).map((d) => (
+                  <button
+                    key={d.id}
+                    onClick={() => {
+                      const note: Message = { id: genId(), role: "assistant", content: `Transferring you to the ${d.label} department…`, timestamp: new Date(), dept: deptId };
+                      setMessages((prev) => [...prev, note]);
+                      setDeptId(d.id);
+                    }}
+                    className={`flex w-full items-center gap-2 px-3 py-2 text-xs transition-colors hover:bg-[#111827] ${d.colorText}`}
+                  >
+                    <d.icon className="h-3 w-3" /> {d.label}
+                  </button>
+                ))}
+              </div>
+            </div>
             <button
               onClick={() => {
                 const txt = messages

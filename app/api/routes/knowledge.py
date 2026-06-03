@@ -23,6 +23,29 @@ from app.security.auth import get_principal
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Semantic search
+# ─────────────────────────────────────────────────────────────────────────────
+
+from fastapi import Query as _Query
+
+@router.get("/search")
+async def search_knowledge(
+    q: str = _Query(..., min_length=1, description="Natural-language search query"),
+    top_k: int = _Query(5, ge=1, le=20),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    """Semantic search over the knowledge base using ChromaDB vector similarity."""
+    try:
+        from app.memory.long_term import long_term_memory
+        mem = long_term_memory()
+        results = mem.search(q, k=top_k)
+        return {"query": q, "results": results, "count": len(results)}
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Knowledge search failed: {}", exc)
+        return {"query": q, "results": [], "count": 0, "error": str(exc)}
+
 _ALLOWED_MIME = {
     "text/plain",
     "application/pdf",
@@ -266,11 +289,11 @@ async def _embed_document(db, doc_id: str, content: str, metadata: dict) -> None
     try:
         from app.memory.long_term import long_term_memory
         mem = long_term_memory()
-        await mem.store(key=doc_id, value=content, metadata=metadata)
+        mem.upsert(content, doc_id=doc_id, metadata=metadata)
 
         # Mark embedding as complete in the DB
         import uuid as _uuid
-        from sqlalchemy import select, update
+        from sqlalchemy import update
         from app.db.models import KnowledgeDocumentModel
         try:
             did = _uuid.UUID(doc_id)

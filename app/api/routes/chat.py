@@ -24,7 +24,7 @@ from app.db.crud import (
 from app.db.session import get_db
 from app.models.schemas import ChatRequest, ChatResponse, Principal
 from app.security.auth import get_principal, optional_principal
-from app.services.chat_service import chat_service
+from app.services.chat_service import chat_service, stream_chat_tokens
 
 router = APIRouter(prefix="/chat", tags=["chat"])
 
@@ -120,14 +120,11 @@ async def chat_stream(
         yield _sse({"type": "typing"})
         await asyncio.sleep(0)
         try:
-            response: ChatResponse = await chat_service().handle(request)
-            content: str = response.message.content or ""
-            words = content.split(" ")
-            for i, word in enumerate(words):
-                chunk = word + ("" if i == len(words) - 1 else " ")
-                yield _sse({"type": "token", "token": chunk})
-                await asyncio.sleep(0.02)
-            yield _sse({"type": "done", "response": response.model_dump(mode="json")})
+            full_text = ""
+            async for token in stream_chat_tokens(request):
+                full_text += token
+                yield _sse({"type": "token", "token": token})
+            yield _sse({"type": "done", "response": {"message": {"content": full_text}}})
         except Exception as exc:  # noqa: BLE001
             yield _sse({"type": "error", "message": str(exc)})
 

@@ -26,6 +26,7 @@ import {
   ClipboardList,
   BookOpen,
   GitBranch,
+  Plug,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { clearAuth, getUser, type AuthUser } from "@/lib/auth";
@@ -39,6 +40,7 @@ const NAV = [
   { href: "/analytics", icon: BarChart3, label: "Analytics" },
   { href: "/escalations", icon: AlertTriangle, label: "Escalations" },
   { href: "/knowledge", icon: BookOpen, label: "Knowledge Base" },
+  { href: "/integrations", icon: Plug, label: "Integrations" },
   { href: "/audit", icon: ClipboardList, label: "Audit Log" },
   { href: "/settings", icon: Settings, label: "Settings" },
 ];

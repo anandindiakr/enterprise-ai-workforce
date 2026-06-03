@@ -135,3 +135,53 @@ def chat_service() -> ChatService:
     if _service is None:
         _service = ChatService()
     return _service
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# True streaming helper (uses OpenAI stream=True directly, bypasses Swarms)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def stream_chat_tokens(request: ChatRequest):
+    """Yield raw text tokens from OpenAI with streaming enabled.
+
+    Falls back to the standard ChatService.handle() if streaming is
+    unavailable (no API key, OpenAI import error, etc.).
+    """
+    import os
+    from app.core.config import settings
+
+    openai_key = getattr(settings, "openai_api_key", None) or os.getenv("OPENAI_API_KEY", "")
+    if not openai_key:
+        # Fallback: return full response as one token
+        resp = await chat_service().handle(request)
+        yield resp.message.content or ""
+        return
+
+    try:
+        from openai import AsyncOpenAI
+        from app.agents.profiles import PROFILES_BY_DEPARTMENT
+        from app.core.types import Department
+
+        department = request.department or Department.RECEPTION
+        profile = PROFILES_BY_DEPARTMENT.get(department)
+        system_prompt = profile.system_prompt if profile else "You are a helpful AI assistant."
+
+        client = AsyncOpenAI(api_key=openai_key)
+        stream = await client.chat.completions.create(
+            model=getattr(settings, "openai_model", "gpt-4o-mini"),
+            messages=[
+                {"role": "system", "content": system_prompt},
+                {"role": "user",   "content": request.message},
+            ],
+            stream=True,
+            temperature=0.7,
+            max_tokens=1024,
+        )
+        async for chunk in stream:
+            delta = chunk.choices[0].delta.content if chunk.choices else None
+            if delta:
+                yield delta
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("OpenAI streaming failed, falling back: {}", exc)
+        resp = await chat_service().handle(request)
+        yield resp.message.content or ""
