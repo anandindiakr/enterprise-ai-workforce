@@ -78,16 +78,19 @@ async def upload_document(
         uploaded_by=principal.user_id,
     )
 
-    # Kick off async embedding via Celery (fire-and-forget)
+    # Kick off embedding — Celery first, asyncio background task as fallback
+    _meta = {"title": doc_title, "category": category, "tenant_id": doc.tenant_id}
+    _dispatched = False
     try:
         from app.workers.tasks import ingest_document
-        ingest_document.delay(
-            str(doc.id),
-            content,
-            {"title": doc_title, "category": category, "tenant_id": doc.tenant_id},
-        )
+        ingest_document.delay(str(doc.id), content, _meta)
+        _dispatched = True
     except Exception:  # noqa: BLE001
         pass
+
+    if not _dispatched:
+        import asyncio
+        asyncio.create_task(_embed_document(db, str(doc.id), content, _meta))
 
     logger.info("Knowledge doc uploaded: {} ({} bytes)", doc.id, len(raw))
     return {
@@ -252,3 +255,33 @@ def _extract_text(raw: bytes, filename: str, mime: str) -> str:
         return raw.decode("utf-8", errors="replace")
     except Exception:
         return ""
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Background embedding helper (asyncio fallback when Celery is unavailable)
+# ─────────────────────────────────────────────────────────────────────────────
+
+async def _embed_document(db, doc_id: str, content: str, metadata: dict) -> None:
+    """Embed and store a document in ChromaDB; update DB embedding_status."""
+    try:
+        from app.memory.long_term import long_term_memory
+        mem = long_term_memory()
+        await mem.store(key=doc_id, value=content, metadata=metadata)
+
+        # Mark embedding as complete in the DB
+        import uuid as _uuid
+        from sqlalchemy import select, update
+        from app.db.models import KnowledgeDocumentModel
+        try:
+            did = _uuid.UUID(doc_id)
+            await db.execute(
+                update(KnowledgeDocumentModel)
+                .where(KnowledgeDocumentModel.id == did)
+                .values(embedding_status="complete")
+            )
+            await db.commit()
+        except Exception:  # noqa: BLE001
+            pass  # status update is best-effort
+        logger.info("Knowledge doc embedded (asyncio fallback): {}", doc_id)
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Knowledge embedding failed for {}: {}", doc_id, exc)

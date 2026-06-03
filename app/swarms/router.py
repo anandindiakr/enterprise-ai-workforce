@@ -141,10 +141,12 @@ class WorkforceRouter:
 
                 duration_ms = int((time.perf_counter() - start) * 1000)
                 swarm_executions_total.labels(plan.strategy.value, plan.department.value).inc()
+                from app.core.agent_output import extract_agent_text
+                clean_output = extract_agent_text(str(output) if output is not None else "", task=request.task)
                 return WorkflowResult(
                     department=plan.department,
                     strategy=plan.strategy,
-                    output=output,
+                    output=clean_output or str(output),
                     duration_ms=duration_ms,
                     agents_involved=[a.agent_name for a in plan.agents],
                     succeeded=True,

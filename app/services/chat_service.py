@@ -34,23 +34,10 @@ _FUNC_RESULT_RE = re.compile(
 )
 
 
-def _extract_agent_text(raw: str) -> str:
-    """Return only the final assistant text from raw agent.run() output."""
-    if not raw:
-        return ""
-
-    # Split on tool-call patterns and take the text that follows the last one
-    parts = _FUNC_RESULT_RE.split(raw)
-    final = parts[-1].strip()
-
-    if final:
-        # Strip leading/trailing JSON array artefacts e.g. "[{...}]\n"
-        final = re.sub(r"^\s*\[.*?\]\s*", "", final, flags=re.DOTALL).strip()
-        return final
-
-    # Fallback: if whole string is None markers just return empty
-    cleaned = re.sub(r"(Current Internal Reasoning Loop[^\n]*|Final Internal Reasoning Loop[^\n]*|None)\n?", "", raw)
-    return cleaned.strip()
+def _extract_agent_text(raw: str, task: str = "") -> str:
+    """Thin wrapper around the shared utility for backward compatibility."""
+    from app.core.agent_output import extract_agent_text
+    return extract_agent_text(raw, task=task)
 
 
 class ChatService:
@@ -100,7 +87,7 @@ class ChatService:
                 department.value, "success" if wf.succeeded else "error"
             ).inc()
 
-            text = _extract_agent_text(str(wf.output) if wf.output is not None else "")
+            text = _extract_agent_text(str(wf.output) if wf.output is not None else "", task=request.message)
             escalation, transferred = _detect_control_signals(text)
             if escalation != EscalationLevel.NONE:
                 escalations_total.labels(department.value, escalation.value).inc()
