@@ -73,16 +73,26 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     init_tracing()
     logger.info("AI Workforce starting (env={})", settings.app_env)
 
+    import asyncio
+
     # Bring up infra
     await init_db()
     await short_term_memory().connect()
     long_term_memory().connect()
-    await mcp_registry().initialize_all()
 
     # Load any DB-saved API keys into os.environ (supplements .env / Docker envs)
     from app.db.session import AsyncSessionLocal
     async with AsyncSessionLocal() as _db:
         await load_secrets_to_env(_db)
+
+    # Initialize MCP connectors AFTER the server is ready (they connect back to
+    # built-in mock routes which are only reachable once uvicorn starts serving).
+    async def _delayed_mcp_init() -> None:
+        await asyncio.sleep(3)  # wait for uvicorn to accept connections
+        await mcp_registry().initialize_all()
+        logger.info("MCP registry initialized ({} tools)", len(mcp_registry().list_tools()))
+
+    asyncio.create_task(_delayed_mcp_init())
 
     try:
         yield

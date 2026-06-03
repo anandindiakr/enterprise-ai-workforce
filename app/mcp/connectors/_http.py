@@ -32,8 +32,9 @@ class HttpMCPConnector(MCPConnector):
         headers = {"Content-Type": "application/json"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
+        # Do NOT set base_url on the client so that we always use explicit full URLs
         self._http = httpx.AsyncClient(
-            base_url=self.base_url, headers=headers, timeout=self.timeout_s
+            headers=headers, timeout=self.timeout_s
         )
 
     async def close(self) -> None:
@@ -81,7 +82,7 @@ class HttpMCPConnector(MCPConnector):
     )
     async def _jsonrpc(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         payload = {"jsonrpc": "2.0", "id": 1, "method": method, "params": params}
-        r = await self.http.post("/", json=payload)
+        r = await self.http.post(str(self.base_url), json=payload)
         if r.status_code >= 400:
             raise MCPError(f"{self.name} HTTP {r.status_code}: {r.text}")
         body = r.json()

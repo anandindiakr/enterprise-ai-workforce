@@ -94,6 +94,19 @@ class ChatService:
                 escalations_total.labels(department.value, escalation.value).inc()
             final_dept = transferred or department
 
+            # If transfer stripped the entire message, provide a natural handoff phrase
+            if not text.strip() and transferred:
+                dept_labels = {
+                    "reception": "Reception", "customer_care": "Customer Care",
+                    "sales": "Sales", "hr": "Human Resources", "finance": "Finance",
+                    "technology": "Technology", "marketing": "Marketing",
+                }
+                label = dept_labels.get(
+                    str(transferred.value if hasattr(transferred, "value") else transferred),
+                    str(transferred).replace("_", " ").title()
+                )
+                text = f"Let me connect you with our {label} team right away."
+
             agent_msg = Message(
                 session_id=session_id,
                 role=Role.AGENT,

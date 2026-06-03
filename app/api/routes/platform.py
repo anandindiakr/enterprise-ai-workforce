@@ -301,7 +301,7 @@ async def list_mcp_tools(
     _: Principal = Depends(get_principal),
 ) -> list[dict]:
     return [
-        {"connector": connector, "tool": t.name, "description": t.description}
+        {"name": t.name, "connector": connector, "tool": t.name, "description": t.description}
         for connector, t in mcp_registry().list_tools(department)
     ]
 

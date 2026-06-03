@@ -37,7 +37,13 @@ export default function LoginPage() {
         throw new Error(body.detail ?? "Invalid credentials");
       }
       const data = await res.json() as { access_token: string; refresh_token?: string };
-      saveToken(data.access_token, { username, roles: ["agent"] }, data.refresh_token);
+      // Decode JWT payload to get actual roles
+      let roles: string[] = ["agent"];
+      try {
+        const payload = JSON.parse(atob(data.access_token.split(".")[1]));
+        if (Array.isArray(payload.roles)) roles = payload.roles;
+      } catch { /* ignore */ }
+      saveToken(data.access_token, { username, roles }, data.refresh_token);
       router.replace("/");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -144,11 +150,11 @@ export default function LoginPage() {
             <p className="font-mono text-[10px] uppercase tracking-wider text-slate-600 mb-1.5">Demo accounts</p>
             <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-400"><span className="text-amber-400 font-mono">admin</span> / changeme123</span>
+                <span className="text-xs text-slate-400"><span className="text-amber-400 font-mono">admin</span> / admin123</span>
                 <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-400 font-mono">Full access</span>
               </div>
               <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-400"><span className="text-cyan-400 font-mono">agent</span> / agent</span>
+                <span className="text-xs text-slate-400"><span className="text-cyan-400 font-mono">agent</span> / agent123</span>
                 <span className="rounded-full bg-cyan-500/10 px-2 py-0.5 text-[10px] text-cyan-400 font-mono">Agent access</span>
               </div>
             </div>

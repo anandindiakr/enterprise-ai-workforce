@@ -26,14 +26,9 @@ class LongTermMemory:
     def connect(self) -> None:
         if self._client is not None:
             return
-        try:
-            self._client = chromadb.HttpClient(
-                host=settings.chroma_host, port=settings.chroma_port
-            )
-        except Exception as exc:  # pragma: no cover
-            logger.warning("Chroma HTTP client failed ({}); using in-memory fallback", exc)
-            self._client = chromadb.EphemeralClient()
-
+        self._client = chromadb.HttpClient(
+            host=settings.chroma_host, port=settings.chroma_port
+        )
         self._collection = self._client.get_or_create_collection(
             name=self._collection_name,
             metadata={"hnsw:space": "cosine"},
