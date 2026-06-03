@@ -86,6 +86,10 @@ class VoiceSessionStartRequest(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 
+# Alias used by voice_ws and other modules
+VoiceSessionConfig = VoiceSessionStartRequest
+
+
 class VoiceSessionDescriptor(BaseModel):
     session_id: str
     department: Department

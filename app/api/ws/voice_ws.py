@@ -75,20 +75,21 @@ async def voice_socket(ws: WebSocket, session_id: str) -> None:
         # Auto-create an on-demand voice session so the frontend doesn't need
         # to call POST /voice/sessions first.
         try:
-            from app.models.schemas import VoiceSessionConfig
             from app.core.types import Department
             dept_param = ws.query_params.get("department", "reception")
+            user_id    = ws.query_params.get("user_id", "anonymous")
+            tenant_id  = ws.query_params.get("tenant_id", "default")
             try:
                 dept_enum = Department(dept_param)
             except ValueError:
                 dept_enum = Department.RECEPTION
-            session = await manager.create(
-                session_id=session_id,
-                user_id=ws.query_params.get("user_id", "anonymous"),
-                tenant_id=ws.query_params.get("tenant_id", "default"),
+            session = await manager.open(
+                user_id=user_id,
+                tenant_id=tenant_id,
                 department=dept_enum,
-                config=VoiceSessionConfig(),
             )
+            # The manager assigns its own session_id; keep it consistent
+            session_id = session.session_id
         except Exception as exc:  # noqa: BLE001
             await ws.send_json({"type": "error", "message": f"Could not create session: {exc}"})
             await ws.close(code=4004)
