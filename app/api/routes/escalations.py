@@ -1,7 +1,10 @@
 """Escalation management API."""
 from __future__ import annotations
 
+import asyncio
 import uuid
+
+from app.core.broadcast import bus
 from datetime import datetime, timezone
 from typing import Any
 
@@ -77,7 +80,6 @@ async def create_escalation_endpoint(
         pass  # Celery not running — fall through to asyncio background task
 
     if not _dispatched:
-        import asyncio
         from app.services.notification_service import send_escalation_email
         asyncio.create_task(send_escalation_email(str(esc.id), esc_payload))
 
@@ -90,6 +92,12 @@ async def create_escalation_endpoint(
         resource_id=str(esc.id),
         details={"department": esc.department, "priority": esc.priority},
     )
+
+    # Broadcast to all /ws/events subscribers
+    asyncio.create_task(bus.publish("escalations", {
+        "type": "new_escalation",
+        **_esc_dict(esc),
+    }))
 
     return _esc_dict(esc)
 
@@ -133,6 +141,46 @@ async def get_escalation_endpoint(
     esc = result.scalar_one_or_none()
     if esc is None:
         raise HTTPException(status_code=404, detail="Escalation not found")
+    return _esc_dict(esc)
+
+
+@router.patch("/{escalation_id}/assign")
+async def assign_escalation_endpoint(
+    escalation_id: str,
+    principal: Principal = Depends(get_principal),
+    db=Depends(get_db),
+) -> dict:
+    """Assign an escalation to the calling user."""
+    from sqlalchemy import select
+    from app.db.models import EscalationModel
+    try:
+        eid = uuid.UUID(escalation_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid escalation ID")
+
+    result = await db.execute(
+        select(EscalationModel).where(EscalationModel.id == eid)
+    )
+    esc = result.scalar_one_or_none()
+    if esc is None:
+        raise HTTPException(status_code=404, detail="Escalation not found")
+    if esc.status == "resolved":
+        raise HTTPException(status_code=409, detail="Cannot assign a resolved escalation")
+
+    esc.status = "assigned"
+    esc.assigned_to = principal.user_id
+    await db.commit()
+    await db.refresh(esc)
+
+    await write_audit_log(
+        db,
+        tenant_id=principal.tenant_id or "default",
+        user_id=principal.user_id,
+        action="escalation.assign",
+        resource_type="escalation",
+        resource_id=str(esc.id),
+        details={"assigned_to": esc.assigned_to},
+    )
     return _esc_dict(esc)
 
 

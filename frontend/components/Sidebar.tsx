@@ -27,6 +27,7 @@ import {
   BookOpen,
   GitBranch,
   Plug,
+  UserCog,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { clearAuth, getUser, type AuthUser } from "@/lib/auth";
@@ -42,6 +43,7 @@ const NAV = [
   { href: "/knowledge", icon: BookOpen, label: "Knowledge Base" },
   { href: "/integrations", icon: Plug, label: "Integrations" },
   { href: "/audit", icon: ClipboardList, label: "Audit Log" },
+  { href: "/admin/users", icon: UserCog, label: "User Management", adminOnly: true },
   { href: "/settings", icon: Settings, label: "Settings" },
 ];
 
@@ -103,7 +105,7 @@ export function Sidebar() {
 
       {/* Main nav */}
       <nav className="flex-shrink-0 space-y-1 px-2 pt-4">
-        {NAV.map(({ href, icon: Icon, label }) => {
+        {NAV.filter(({ adminOnly }) => !adminOnly || user?.roles?.includes("admin")).map(({ href, icon: Icon, label }) => {
           const active = path === href;
           return (
             <Link

@@ -122,19 +122,32 @@ def ingest_document(
 ) -> dict[str, Any]:
     """Embed and store a document in the long-term vector memory (ChromaDB)."""
     try:
-        async def _ingest():
-            from app.memory.long_term import long_term_memory
-            mem = long_term_memory()
-            await mem.store(
-                key=document_id,
-                value=content,
-                metadata=metadata,
-            )
-            return {"stored": True, "document_id": document_id}
+        # LongTermMemory.upsert is synchronous — call directly
+        from app.memory.long_term import long_term_memory
+        mem = long_term_memory()
+        mem.upsert(content, doc_id=document_id, metadata=metadata)
 
-        result = _run(_ingest())
+        # Update embedding_status in DB (requires async session)
+        async def _update_status() -> None:
+            import uuid as _uuid
+            from sqlalchemy import update as _upd
+            from app.db.models import KnowledgeDocumentModel
+            from app.db.session import AsyncSessionLocal
+            try:
+                did = _uuid.UUID(document_id)
+                async with AsyncSessionLocal() as db:
+                    await db.execute(
+                        _upd(KnowledgeDocumentModel)
+                        .where(KnowledgeDocumentModel.id == did)
+                        .values(embedding_status="complete")
+                    )
+                    await db.commit()
+            except Exception as db_exc:  # noqa: BLE001
+                logger.warning("embedding_status update skipped: %s", db_exc)
+
+        _run(_update_status())
         logger.info("Document ingested: %s", document_id)
-        return result
+        return {"stored": True, "document_id": document_id}
     except Exception as exc:  # noqa: BLE001
         logger.error("ingest_document failed doc=%s: %s", document_id, exc)
         raise self.retry(exc=exc, countdown=60, max_retries=3)

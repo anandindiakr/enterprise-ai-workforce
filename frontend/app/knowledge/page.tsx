@@ -63,6 +63,7 @@ export default function KnowledgeBasePage() {
   const [category, setCategory] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState("");
+  const [pollingId, setPollingId] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const [uploadTitle, setUploadTitle] = useState("");
   const [uploadCategory, setUploadCategory] = useState("General");
@@ -118,15 +119,51 @@ export default function KnowledgeBasePage() {
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.detail ?? `HTTP ${res.status}`);
-      setUploadMsg(`Uploaded: ${data.title} — embedding in progress`);
+      setUploadMsg(`Uploaded: "${data.title}" — embedding in progress…`);
       setUploadTitle("");
       if (fileRef.current) fileRef.current.value = "";
       fetchDocs();
+      // Start polling embedding status
+      if (data.id) pollEmbedding(data.id);
     } catch (e: unknown) {
       setUploadMsg(e instanceof Error ? `Error: ${e.message}` : "Upload failed");
     } finally {
       setUploading(false);
     }
+  }
+
+  function pollEmbedding(docId: string) {
+    setPollingId(docId);
+    const startMs = Date.now();
+    const maxMs   = 120_000; // 2 min timeout
+
+    const interval = setInterval(async () => {
+      try {
+        const res = await fetch(`${API}/api/v1/knowledge/${docId}`, { headers: authHeaders() });
+        if (!res.ok) { clearInterval(interval); setPollingId(null); return; }
+        const doc: KBDocument = await res.json();
+
+        // Refresh the list so the badge updates live
+        fetchDocs();
+
+        if (doc.embedding_status === "complete" || doc.embedding_status === "indexed") {
+          setUploadMsg(`Embedding complete for "${doc.title}" — ready for search.`);
+          clearInterval(interval);
+          setPollingId(null);
+        } else if (doc.embedding_status === "error") {
+          setUploadMsg(`Embedding failed for "${doc.title}". Please re-upload.`);
+          clearInterval(interval);
+          setPollingId(null);
+        } else if (Date.now() - startMs > maxMs) {
+          setUploadMsg("Embedding is taking longer than expected — check back later.");
+          clearInterval(interval);
+          setPollingId(null);
+        }
+      } catch {
+        clearInterval(interval);
+        setPollingId(null);
+      }
+    }, 3_000);
   }
 
   async function handleDelete(id: string) {
@@ -246,14 +283,15 @@ export default function KnowledgeBasePage() {
                 </div>
                 <button
                   onClick={handleUpload}
-                  disabled={uploading}
+                  disabled={uploading || !!pollingId}
                   className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm font-medium hover:bg-violet-700 disabled:opacity-50 transition-colors"
                 >
-                  {uploading ? "Uploading…" : "Upload"}
+                  {uploading ? "Uploading…" : pollingId ? "Embedding…" : "Upload"}
                 </button>
               </div>
               {uploadMsg && (
-                <p className={`mt-2 text-sm ${uploadMsg.startsWith("Error") ? "text-red-400" : "text-emerald-400"}`}>
+                <p className={`mt-2 text-sm flex items-center gap-2 ${uploadMsg.startsWith("Error") || uploadMsg.startsWith("Embedding failed") ? "text-red-400" : uploadMsg.includes("complete") ? "text-emerald-400" : "text-violet-300"}`}>
+                  {pollingId && <RefreshCw className="h-3.5 w-3.5 animate-spin flex-shrink-0" />}
                   {uploadMsg}
                 </p>
               )}
