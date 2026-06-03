@@ -113,7 +113,7 @@ async def upload_document(
 
     if not _dispatched:
         import asyncio
-        asyncio.create_task(_embed_document(db, str(doc.id), content, _meta))
+        asyncio.create_task(_embed_document(str(doc.id), content, _meta))
 
     logger.info("Knowledge doc uploaded: {} ({} bytes)", doc.id, len(raw))
     return {
@@ -284,27 +284,42 @@ def _extract_text(raw: bytes, filename: str, mime: str) -> str:
 # Background embedding helper (asyncio fallback when Celery is unavailable)
 # ─────────────────────────────────────────────────────────────────────────────
 
-async def _embed_document(db, doc_id: str, content: str, metadata: dict) -> None:
-    """Embed and store a document in ChromaDB; update DB embedding_status."""
-    try:
-        from app.memory.long_term import long_term_memory
-        mem = long_term_memory()
-        mem.upsert(content, doc_id=doc_id, metadata=metadata)
+async def _embed_document(doc_id: str, content: str, metadata: dict) -> None:
+    """Embed and store a document in ChromaDB; update DB embedding_status.
 
-        # Mark embedding as complete in the DB
+    Runs in an asyncio background task.  Creates its own DB session so it is
+    not affected by the already-closed request session.
+    """
+    try:
+        import asyncio as _asyncio
+        from app.memory.long_term import long_term_memory
+
+        mem = long_term_memory()
+        # ChromaDB upsert is blocking — run it in a thread to avoid blocking
+        # the event loop while sentence-transformers generates embeddings.
+        loop = _asyncio.get_event_loop()
+        await loop.run_in_executor(
+            None, lambda: mem.upsert(content, doc_id=doc_id, metadata=metadata)
+        )
+
+        # Update embedding status using a fresh independent DB session
         import uuid as _uuid
-        from sqlalchemy import update
+        from sqlalchemy import update as _update
         from app.db.models import KnowledgeDocumentModel
+        from app.db.session import AsyncSessionLocal
+
         try:
             did = _uuid.UUID(doc_id)
-            await db.execute(
-                update(KnowledgeDocumentModel)
-                .where(KnowledgeDocumentModel.id == did)
-                .values(embedding_status="complete")
-            )
-            await db.commit()
+            async with AsyncSessionLocal() as new_db:
+                await new_db.execute(
+                    _update(KnowledgeDocumentModel)
+                    .where(KnowledgeDocumentModel.id == did)
+                    .values(embedding_status="complete")
+                )
+                await new_db.commit()
         except Exception:  # noqa: BLE001
             pass  # status update is best-effort
+
         logger.info("Knowledge doc embedded (asyncio fallback): {}", doc_id)
     except Exception as exc:  # noqa: BLE001
         logger.error("Knowledge embedding failed for {}: {}", doc_id, exc)

@@ -230,6 +230,26 @@ export default function ChatPage() {
           setTyping(true);
           return;
         }
+
+        // Handle agent-initiated department transfer
+        const transferredTo: string | null =
+          data.transferred_to ?? data.transferredTo ?? null;
+        if (transferredTo && DEPARTMENTS.some((d) => d.id === transferredTo)) {
+          const targetDept = getDept(transferredTo);
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: genId(),
+              role: "assistant",
+              content: `Transferring you to the **${targetDept.label}** department…`,
+              timestamp: new Date(),
+              dept: deptId,
+            },
+          ]);
+          setDeptId(transferredTo);
+          return;
+        }
+
         // Backend sends full ChatResponse: { message: { content: string, ... }, ... }
         const text: string =
           typeof data?.message?.content === "string"
@@ -239,10 +259,19 @@ export default function ChatPage() {
             : typeof data?.message === "string"
             ? data.message
             : String(ev.data);
-        setMessages((prev) => [
-          ...prev,
-          { id: genId(), role: "assistant", content: text, timestamp: new Date(), dept: deptId },
-        ]);
+
+        // Auto-switch department if the response carries one
+        const responseDept: string | null = data.department ?? data.message?.department ?? null;
+        if (responseDept && DEPARTMENTS.some((d) => d.id === responseDept) && responseDept !== deptId) {
+          setDeptId(responseDept);
+        }
+
+        if (text && text !== "[object Object]") {
+          setMessages((prev) => [
+            ...prev,
+            { id: genId(), role: "assistant", content: text, timestamp: new Date(), dept: responseDept ?? deptId },
+          ]);
+        }
       } catch {
         setMessages((prev) => [
           ...prev,

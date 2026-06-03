@@ -211,6 +211,26 @@ def _detect_control_signals(text: str) -> tuple[EscalationLevel, Department | No
     return escalation, transfer
 
 
+def _strip_control_signals(text: str) -> str:
+    """Remove JSON control-signal lines from agent text before display or TTS.
+
+    Lines that are bare JSON objects containing ``transfer`` or ``escalate``
+    keys are silently dropped so they are never shown to the user.
+    """
+    clean = []
+    for line in text.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("{") and stripped.endswith("}"):
+            try:
+                payload = json.loads(stripped)
+                if "transfer" in payload or "escalate" in payload:
+                    continue  # swallow control directive
+            except Exception:
+                pass
+        clean.append(line)
+    return "\n".join(clean).strip()
+
+
 _manager: VoiceSessionManager | None = None
 
 

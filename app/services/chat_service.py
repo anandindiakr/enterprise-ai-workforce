@@ -23,7 +23,7 @@ from app.telemetry.metrics import (
     chat_requests_total,
     escalations_total,
 )
-from app.voice.session import _detect_control_signals  # reuse signal parser
+from app.voice.session import _detect_control_signals, _strip_control_signals
 
 # Swarms agent.run() returns the raw conversation accumulation:
 #   {task}\n[{tool_calls_json}]\nFunction '{name}' result:\n{json}\n{response}
@@ -89,6 +89,7 @@ class ChatService:
 
             text = _extract_agent_text(str(wf.output) if wf.output is not None else "", task=request.message)
             escalation, transferred = _detect_control_signals(text)
+            text = _strip_control_signals(text)  # remove JSON directives before display
             if escalation != EscalationLevel.NONE:
                 escalations_total.labels(department.value, escalation.value).inc()
             final_dept = transferred or department

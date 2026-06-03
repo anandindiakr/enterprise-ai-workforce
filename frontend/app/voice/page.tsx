@@ -225,6 +225,14 @@ export default function VoicePage() {
           _appendLine("agent", msg.text);
         } else if (msg.type === "audio") {
           _playBase64Audio(msg.data, msg.mime ?? "audio/mpeg");
+        } else if (msg.type === "transfer") {
+          // Department transfer — update the active department indicator
+          const newDept = msg.department as string;
+          if (newDept && DEPARTMENTS.some((d) => d.id === newDept)) {
+            setDeptId(newDept);
+            const label = DEPARTMENTS.find((d) => d.id === newDept)?.label ?? newDept;
+            _appendLine("agent", `[ Transferred to ${label} ]`);
+          }
         } else if (msg.type === "error") {
           _appendLine("agent", `⚠️ ${msg.message}`);
           setVoiceState("idle");

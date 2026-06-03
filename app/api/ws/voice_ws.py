@@ -35,7 +35,7 @@ from app.core.logging import logger
 from app.core.exceptions import AuthenticationError
 from app.security.auth import decode_token
 from app.voice.vad import EnergyVAD, mulaw_to_pcm16
-from app.voice.session import voice_session_manager
+from app.voice.session import voice_session_manager, _strip_control_signals
 from app.models.schemas import ChatRequest
 from app.services.chat_service import chat_service
 
@@ -300,6 +300,34 @@ async def _process_utterance(
             )
         )
         reply_text = chat_resp.message.content or ""
+
+        # --- Handle department transfer silently (before TTS) ---------------
+        if chat_resp.transferred_to:
+            new_dept = chat_resp.transferred_to
+            dept_name = new_dept.value if hasattr(new_dept, "value") else str(new_dept)
+            # Update session department so the next turn uses the new dept
+            try:
+                from app.core.types import Department as _Dept
+                session.department = _Dept(dept_name)  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            dept = dept_name
+            # Emit a transfer event so the frontend can update its UI
+            await ws.send_json({"type": "transfer", "department": dept_name})
+            # Replace the TTS reply with a natural handoff phrase
+            dept_labels = {
+                "reception": "Reception", "customer_care": "Customer Care",
+                "sales": "Sales", "hr": "HR", "finance": "Finance",
+                "technology": "Technology", "marketing": "Marketing",
+            }
+            label = dept_labels.get(dept_name, dept_name.replace("_", " ").title())
+            reply_text = f"I'm connecting you to our {label} team now. One moment please."
+
+        # Strip any remaining control-signal JSON that should not be spoken
+        reply_text = _strip_control_signals(reply_text)
+        if not reply_text:
+            reply_text = "I'm here to help. How can I assist you?"
+
     except Exception as exc:  # noqa: BLE001
         reply_text = "I'm sorry, I encountered an error. Please try again."
         await ws.send_json({"type": "error", "message": str(exc)})
