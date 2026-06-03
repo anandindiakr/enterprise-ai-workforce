@@ -17,10 +17,11 @@ import pytest
 class TestCreateDecodeToken:
     def test_roundtrip(self):
         from app.security.auth import create_access_token, decode_token
-        token = create_access_token({"sub": "alice", "tenant_id": "acme"})
+        # create_access_token(subject: str, *, tenant_id, roles, scopes, ...)
+        token = create_access_token("alice", tenant_id="acme")
         claims = decode_token(token)
         assert claims["sub"] == "alice"
-        assert claims["tenant_id"] == "acme"
+        assert claims.get("tenant_id") == "acme"
 
     def test_expired_raises(self):
         from jose import jwt
@@ -58,22 +59,6 @@ class TestPasswordHelpers:
 # ---------------------------------------------------------------------------
 # Chat CRUD helpers (async, using an in-memory SQLite engine)
 # ---------------------------------------------------------------------------
-
-@pytest.fixture
-async def db_session():
-    """Provide an in-memory async SQLite session for unit tests."""
-    from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker
-    from app.db.models import Base
-
-    engine = create_async_engine("sqlite+aiosqlite:///:memory:", echo=False)
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
-    Session = async_sessionmaker(engine, expire_on_commit=False)
-    async with Session() as session:
-        async with session.begin():
-            yield session
-    await engine.dispose()
-
 
 @pytest.mark.asyncio
 class TestUserCRUD:

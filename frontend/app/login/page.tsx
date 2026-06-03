@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { saveToken } from "@/lib/auth";
 import { Zap, Eye, EyeOff, Loader2 } from "lucide-react";
 
@@ -35,8 +36,8 @@ export default function LoginPage() {
         const body = await res.json().catch(() => ({})) as { detail?: string };
         throw new Error(body.detail ?? "Invalid credentials");
       }
-      const data = await res.json() as { access_token: string };
-      saveToken(data.access_token, { username, roles: ["agent"] });
+      const data = await res.json() as { access_token: string; refresh_token?: string };
+      saveToken(data.access_token, { username, roles: ["agent"] }, data.refresh_token);
       router.replace("/");
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Login failed");
@@ -130,6 +131,12 @@ export default function LoginPage() {
                 "Sign in"
               )}
             </button>
+
+            <div className="text-center">
+              <Link href="/forgot-password" className="text-xs text-slate-500 hover:text-amber-400 transition-colors">
+                Forgot password?
+              </Link>
+            </div>
           </form>
 
           {/* Demo hint */}
@@ -137,7 +144,7 @@ export default function LoginPage() {
             <p className="font-mono text-[10px] uppercase tracking-wider text-slate-600 mb-1.5">Demo accounts</p>
             <div className="space-y-1">
               <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-400"><span className="text-amber-400 font-mono">admin</span> / admin</span>
+                <span className="text-xs text-slate-400"><span className="text-amber-400 font-mono">admin</span> / changeme123</span>
                 <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-400 font-mono">Full access</span>
               </div>
               <div className="flex items-center justify-between">

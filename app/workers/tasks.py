@@ -178,3 +178,81 @@ def summarize_chat_session(
     except Exception as exc:  # noqa: BLE001
         logger.error("summarize_chat_session failed: %s", exc)
         raise self.retry(exc=exc, countdown=60, max_retries=2)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Workflow execution
+# ─────────────────────────────────────────────────────────────────────────────
+
+@celery_app.task(name="app.workers.tasks.execute_workflow", bind=True)
+def execute_workflow(
+    self,
+    workflow_id: str,
+    workflow_name: str,
+    department: str,
+    steps: list[dict[str, Any]],
+    inputs: dict[str, Any],
+    triggered_by: str,
+) -> dict[str, Any]:
+    """Execute a multi-step departmental workflow via the agent factory."""
+    try:
+        async def _exec():
+            results: list[dict[str, Any]] = []
+            for i, step in enumerate(steps or [], start=1):
+                step_name  = step.get("name", f"Step {i}")
+                step_agent = step.get("agent", department)
+                step_task  = step.get("task", step.get("description", "Process workflow step"))
+                try:
+                    from app.agents.factory import agent_factory
+                    factory = agent_factory()
+                    response = await factory.run(
+                        department=step_agent,
+                        task=f"[Workflow: {workflow_name}] Step {i}/{len(steps)}: {step_task}\nInputs: {inputs}",
+                    )
+                    results.append({"step": step_name, "status": "success", "output": str(response)[:500]})
+                except Exception as step_exc:  # noqa: BLE001
+                    results.append({"step": step_name, "status": "error", "error": str(step_exc)})
+
+            # Persist execution log to Redis
+            from app.memory.short_term import short_term_memory
+            redis = short_term_memory()
+            if not redis._client:
+                await redis.connect()
+            import json
+            await redis._client.setex(
+                f"workflow:result:{self.request.id}",
+                3600,
+                json.dumps({"workflow_id": workflow_id, "steps": results, "triggered_by": triggered_by}),
+            )
+            return results
+
+        results = _run(_exec())
+        logger.info("Workflow %s completed (%d steps)", workflow_name, len(results))
+        return {
+            "task_id": self.request.id,
+            "workflow_id": workflow_id,
+            "workflow_name": workflow_name,
+            "status": "completed",
+            "results": results,
+        }
+    except Exception as exc:  # noqa: BLE001
+        logger.error("execute_workflow failed %s: %s", workflow_id, exc)
+        raise self.retry(exc=exc, countdown=30, max_retries=2)
+
+
+@celery_app.task(name="app.workers.tasks.get_workflow_result", bind=True)
+def get_workflow_result(self, task_id: str) -> dict[str, Any]:
+    """Fetch workflow execution result from Redis cache."""
+    try:
+        async def _fetch():
+            from app.memory.short_term import short_term_memory
+            import json
+            redis = short_term_memory()
+            if not redis._client:
+                await redis.connect()
+            raw = await redis._client.get(f"workflow:result:{task_id}")
+            return json.loads(raw) if raw else None
+
+        return _run(_fetch()) or {"task_id": task_id, "status": "pending"}
+    except Exception as exc:  # noqa: BLE001
+        return {"task_id": task_id, "status": "error", "error": str(exc)}

@@ -2,10 +2,11 @@
 from __future__ import annotations
 
 import re
+import secrets
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -14,6 +15,9 @@ from app.db import crud
 from app.db.models import UserModel
 from app.models.schemas import Principal, TokenRequest, TokenResponse
 from app.security.auth import create_access_token, get_principal, require_admin
+
+# In-memory password-reset token store (Redis-backed in production, simple dict for now)
+_reset_tokens: dict[str, tuple[str, datetime]] = {}  # token -> (username, expiry)
 
 router = APIRouter(prefix="/auth", tags=["auth"])
 users_router = APIRouter(prefix="/users", tags=["users"])
@@ -97,6 +101,26 @@ class ChangePasswordRequest(BaseModel):
         return v
 
 
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class ForgotPasswordRequest(BaseModel):
+    email: str
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    new_password: str
+
+    @field_validator("new_password")
+    @classmethod
+    def strength(cls, v: str) -> str:
+        if len(v) < 6:
+            raise ValueError("Password must be at least 6 characters")
+        return v
+
+
 # ── Auth endpoints ────────────────────────────────────────────────────────────
 
 @router.post("/token", response_model=TokenResponse)
@@ -118,7 +142,104 @@ async def login(
         tenant_id=user.tenant_id,
         expires_in=expires_in,
     )
-    return TokenResponse(access_token=token, expires_in=expires_in)
+    # Refresh token is a longer-lived JWT (7 days)
+    refresh_token = create_access_token(
+        subject=user.username,
+        roles=user.roles,
+        scopes=user.scopes,
+        tenant_id=user.tenant_id,
+        expires_in=7 * 24 * 3600,
+    )
+    return TokenResponse(access_token=token, expires_in=expires_in, refresh_token=refresh_token)
+
+
+@router.post("/refresh", response_model=TokenResponse)
+async def refresh_token(
+    payload: RefreshRequest,
+    db: AsyncSession = Depends(get_db),
+) -> TokenResponse:
+    """Exchange a valid refresh token for a new access token."""
+    from app.security.auth import decode_token
+    from app.core.exceptions import AuthenticationError
+    try:
+        claims = decode_token(payload.refresh_token)
+    except (AuthenticationError, Exception):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid or expired refresh token")
+
+    username = claims.get("sub")
+    if not username:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+
+    user = await crud.get_user_by_username(db, username)
+    if not user or not user.is_active:
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
+
+    expires_in = 3600
+    new_access = create_access_token(
+        subject=user.username,
+        roles=user.roles,
+        scopes=user.scopes,
+        tenant_id=user.tenant_id,
+        expires_in=expires_in,
+    )
+    new_refresh = create_access_token(
+        subject=user.username,
+        roles=user.roles,
+        scopes=user.scopes,
+        tenant_id=user.tenant_id,
+        expires_in=7 * 24 * 3600,
+    )
+    return TokenResponse(access_token=new_access, expires_in=expires_in, refresh_token=new_refresh)
+
+
+@router.post("/forgot-password", status_code=200)
+async def forgot_password(
+    payload: ForgotPasswordRequest,
+    background_tasks: BackgroundTasks,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Request a password-reset link. Always returns 200 to avoid user enumeration."""
+    user = await crud.get_user_by_email(db, payload.email.lower())
+    if user:
+        token = secrets.token_urlsafe(32)
+        expiry = datetime.now(timezone.utc) + timedelta(hours=2)
+        _reset_tokens[token] = (user.username, expiry)
+
+        async def _send_reset_email():
+            try:
+                from app.services.notification_service import send_password_reset_email
+                await send_password_reset_email(user.email, token)
+            except Exception:
+                pass  # Fail silently — token still stored
+
+        background_tasks.add_task(_send_reset_email)
+
+    return {"message": "If that email is registered, a reset link has been sent."}
+
+
+@router.post("/reset-password", status_code=200)
+async def reset_password(
+    payload: ResetPasswordRequest,
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Reset password using a valid reset token."""
+    entry = _reset_tokens.get(payload.token)
+    if not entry:
+        raise HTTPException(status_code=400, detail="Invalid or expired reset token")
+
+    username, expiry = entry
+    if datetime.now(timezone.utc) > expiry:
+        del _reset_tokens[payload.token]
+        raise HTTPException(status_code=400, detail="Reset token has expired")
+
+    user = await crud.get_user_by_username(db, username)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    await crud.change_password(db, user, payload.new_password)
+    await db.commit()
+    del _reset_tokens[payload.token]
+    return {"message": "Password reset successfully"}
 
 
 @router.get("/me", response_model=Principal)

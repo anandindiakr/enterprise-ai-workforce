@@ -33,6 +33,14 @@ interface Message {
   content: string;
   timestamp: Date;
   dept?: string;
+  file_name?: string;
+}
+
+interface UploadedFile {
+  file_id: string;
+  filename: string;
+  content_type: string;
+  size_bytes: number;
 }
 
 type WsState = "connecting" | "open" | "closed" | "error";
@@ -128,15 +136,42 @@ export default function ChatPage() {
   const [input, setInput] = useState("");
   const [wsState, setWsState] = useState<WsState>("closed");
   const [typing, setTyping] = useState(false);
+  const [uploadedFile, setUploadedFile] = useState<UploadedFile | null>(null);
+  const [uploading, setUploading] = useState(false);
   // Generate sessionId client-side only to avoid SSR hydration mismatch
   const [sessionId, setSessionId] = useState("");
 
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   const dept = getDept(deptId);
   const Icon = dept.icon;
+
+  const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setUploading(true);
+    try {
+      const formData = new FormData();
+      formData.append("file", file);
+      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+      const res = await fetch(`${apiBase}/api/v1/chat/upload?session_id=${sessionId || ""}`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: formData,
+      });
+      if (!res.ok) throw new Error("Upload failed");
+      const data: UploadedFile = await res.json();
+      setUploadedFile(data);
+    } catch {
+      alert("File upload failed. Please try again.");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
 
   /* Generate sessionId on mount */
   useEffect(() => {
@@ -228,21 +263,29 @@ export default function ChatPage() {
   /* Send message */
   const sendMessage = useCallback(() => {
     const text = input.trim();
-    if (!text) return;
+    if (!text && !uploadedFile) return;
+
+    const displayText = uploadedFile
+      ? `${text}${text ? "\n" : ""}[Attached: ${uploadedFile.filename}]`
+      : text;
 
     const userMsg: Message = {
       id: genId(),
       role: "user",
-      content: text,
+      content: displayText,
       timestamp: new Date(),
     };
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
+    const currentFile = uploadedFile;
+    setUploadedFile(null);
     setTyping(true);
+
+    const fileIds = currentFile ? [currentFile.file_id] : undefined;
 
     if (wsRef.current?.readyState === WebSocket.OPEN) {
       wsRef.current.send(
-        JSON.stringify({ message: text, department: deptId, session_id: sessionId })
+        JSON.stringify({ message: text || "[File attached]", department: deptId, session_id: sessionId, file_ids: fileIds })
       );
     } else {
       /* Fallback: SSE streaming REST */
@@ -252,7 +295,7 @@ export default function ChatPage() {
       fetch(`${apiBase}/api/v1/chat/stream`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ message: text, department: deptId, session_id: sessionId, streaming: true }),
+        body: JSON.stringify({ message: text || "[File attached]", department: deptId, session_id: sessionId, streaming: true, file_ids: fileIds }),
       })
         .then(async (res) => {
           if (!res.ok || !res.body) {
@@ -532,11 +575,39 @@ export default function ChatPage() {
         {/* Input area */}
         <div className="flex-shrink-0 border-t border-[#1f2937] bg-[#070d1a] px-5 py-4">
           <div className="flex items-end gap-3">
-            <button className="mb-2 text-slate-500 transition-colors hover:text-slate-300">
-              <Paperclip className="h-4 w-4" />
+            {/* Hidden file input */}
+            <input
+              ref={fileInputRef}
+              type="file"
+              className="hidden"
+              accept=".txt,.csv,.md,.json,.pdf,.png,.jpg,.jpeg,.gif,.webp"
+              onChange={handleFileSelect}
+            />
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              disabled={uploading}
+              className="mb-2 text-slate-500 transition-colors hover:text-slate-300 disabled:opacity-40"
+              title="Attach file"
+            >
+              {uploading ? (
+                <svg className="h-4 w-4 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"/>
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"/>
+                </svg>
+              ) : (
+                <Paperclip className="h-4 w-4" />
+              )}
             </button>
 
             <div className="relative flex-1">
+              {/* File attachment badge */}
+              {uploadedFile && (
+                <div className="mb-1 flex items-center gap-1.5 rounded-lg bg-indigo-900/40 border border-indigo-700/50 px-2.5 py-1 text-xs text-indigo-300">
+                  <Paperclip className="h-3 w-3" />
+                  <span className="truncate max-w-[200px]">{uploadedFile.filename}</span>
+                  <button onClick={() => setUploadedFile(null)} className="ml-auto text-indigo-400 hover:text-white">×</button>
+                </div>
+              )}
               <textarea
                 ref={inputRef}
                 value={input}
@@ -556,9 +627,9 @@ export default function ChatPage() {
 
             <button
               onClick={sendMessage}
-              disabled={!input.trim()}
+              disabled={!input.trim() && !uploadedFile}
               className={`mb-2 flex h-9 w-9 flex-shrink-0 items-center justify-center rounded-lg transition-all ${
-                input.trim()
+                (input.trim() || uploadedFile)
                   ? "bg-amber-500 text-black hover:bg-amber-400"
                   : "bg-[#111827] text-slate-600 cursor-not-allowed"
               }`}

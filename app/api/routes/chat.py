@@ -9,7 +9,7 @@ import asyncio
 from datetime import datetime, timezone
 from typing import AsyncIterator
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
+from fastapi import APIRouter, Depends, File, HTTPException, Query, Request, UploadFile, status
 from fastapi.responses import StreamingResponse
 
 from app.db.crud import (
@@ -292,3 +292,73 @@ async def export_session(
 
 def _sse(data: dict) -> str:
     return f"data: {json.dumps(data)}\n\n"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# File upload (attach files to a chat context)
+# ─────────────────────────────────────────────────────────────────────────────
+
+_ALLOWED_MIME = {
+    "text/plain", "text/csv", "text/markdown",
+    "application/json", "application/pdf",
+    "image/png", "image/jpeg", "image/gif", "image/webp",
+}
+_MAX_BYTES = 10 * 1024 * 1024  # 10 MB
+
+
+@router.post("/upload")
+async def upload_file(
+    file: UploadFile = File(...),
+    session_id: str | None = Query(None),
+    principal: Principal = Depends(get_principal),
+) -> dict:
+    """Upload a file to attach to a chat session context.
+
+    Returns a ``file_id`` reference that can be included in subsequent
+    ``ChatRequest.file_ids`` to give the agent access to the file content.
+    """
+    import base64
+    import uuid as _uuid
+
+    content_type = file.content_type or "application/octet-stream"
+    if content_type not in _ALLOWED_MIME:
+        raise HTTPException(
+            status_code=415,
+            detail=f"Unsupported file type '{content_type}'. Allowed: {sorted(_ALLOWED_MIME)}",
+        )
+
+    raw = await file.read()
+    if len(raw) > _MAX_BYTES:
+        raise HTTPException(status_code=413, detail=f"File too large (max 10 MB, got {len(raw)} bytes)")
+
+    file_id  = str(_uuid.uuid4())
+    is_image = content_type.startswith("image/")
+
+    # Store in Redis for 30 minutes so the chat handler can pull it
+    try:
+        from app.memory.short_term import short_term_memory
+        redis_mem = short_term_memory()
+        if not redis_mem._client:
+            await redis_mem.connect()
+        payload = json.dumps({
+            "file_id":      file_id,
+            "filename":     file.filename or "upload",
+            "content_type": content_type,
+            "size":         len(raw),
+            "session_id":   session_id,
+            "user_id":      principal.user_id,
+            "data_b64":     base64.b64encode(raw).decode() if is_image else None,
+            "text":         raw.decode("utf-8", errors="replace") if not is_image else None,
+        })
+        await redis_mem._client.setex(f"upload:{file_id}", 1800, payload)
+    except Exception:  # noqa: BLE001
+        pass  # If Redis is unavailable, still return file_id — chat handler will degrade gracefully
+
+    return {
+        "file_id":      file_id,
+        "filename":     file.filename,
+        "content_type": content_type,
+        "size_bytes":   len(raw),
+        "session_id":   session_id,
+        "expires_in":   1800,
+    }

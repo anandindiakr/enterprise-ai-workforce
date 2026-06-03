@@ -60,21 +60,26 @@ async def create_escalation_endpoint(
         metadata=body.metadata,
     )
 
-    # Fire-and-forget notification via Celery
+    # Fire-and-forget notification — try Celery first, fall back to asyncio task
+    esc_payload = {
+        "department": esc.department,
+        "priority": esc.priority,
+        "reason": esc.reason,
+        "user_id": esc.user_id,
+        "session_id": str(esc.session_id) if esc.session_id else None,
+    }
+    _dispatched = False
     try:
         from app.workers.tasks import send_escalation_notification
-        send_escalation_notification.delay(
-            str(esc.id),
-            {
-                "department": esc.department,
-                "priority": esc.priority,
-                "reason": esc.reason,
-                "user_id": esc.user_id,
-                "session_id": str(esc.session_id) if esc.session_id else None,
-            },
-        )
+        send_escalation_notification.delay(str(esc.id), esc_payload)
+        _dispatched = True
     except Exception:  # noqa: BLE001
-        pass  # Celery may not be running in dev
+        pass  # Celery not running — fall through to asyncio background task
+
+    if not _dispatched:
+        import asyncio
+        from app.services.notification_service import send_escalation_email
+        asyncio.create_task(send_escalation_email(str(esc.id), esc_payload))
 
     await write_audit_log(
         db,

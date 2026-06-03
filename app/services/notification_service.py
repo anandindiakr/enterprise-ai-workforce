@@ -82,6 +82,72 @@ async def send_escalation_email(
     return {"sent": False, "reason": "no_provider_configured"}
 
 
+async def send_password_reset_email(to_email: str, reset_token: str) -> dict:
+    """Send a password-reset link email."""
+    frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")
+    reset_url    = f"{frontend_url}/reset-password?token={reset_token}"
+    subject      = "AI Workforce Platform - Password Reset Request"
+    body_html    = f"""<!DOCTYPE html>
+<html>
+<body style="font-family: sans-serif; max-width:600px; margin:auto;">
+  <div style="background:#4f46e5;color:#fff;padding:16px;border-radius:8px 8px 0 0;">
+    <h2 style="margin:0">Password Reset Request</h2>
+  </div>
+  <div style="border:1px solid #e5e7eb;padding:20px;border-radius:0 0 8px 8px;">
+    <p>You requested a password reset. Click the link below to set a new password:</p>
+    <p><a href="{reset_url}" style="background:#4f46e5;color:#fff;padding:10px 20px;border-radius:6px;text-decoration:none;display:inline-block;">Reset Password</a></p>
+    <p style="color:#6b7280;font-size:13px">This link expires in 2 hours. If you did not request this, ignore this email.</p>
+    <hr style="margin:16px 0">
+    <p style="color:#6b7280;font-size:12px">AI Workforce Platform — automated notification</p>
+  </div>
+</body>
+</html>"""
+    body_text = f"Reset your password: {reset_url}\nLink expires in 2 hours."
+
+    resend_key = settings.resend_api_key or os.getenv("RESEND_API_KEY", "")
+    if resend_key:
+        try:
+            import aiohttp  # type: ignore
+            async with aiohttp.ClientSession() as sess:
+                resp = await sess.post(
+                    "https://api.resend.com/emails",
+                    headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+                    json={
+                        "from": settings.email_from or "noreply@workforce.ai",
+                        "to": [to_email],
+                        "subject": subject,
+                        "html": body_html,
+                        "text": body_text,
+                    },
+                )
+                if resp.status in (200, 201):
+                    return {"sent": True, "provider": "resend"}
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Resend password reset email failed: {}", exc)
+
+    smtp_host = settings.smtp_host or os.getenv("SMTP_HOST", "")
+    if smtp_host:
+        try:
+            _send_smtp(
+                host=smtp_host,
+                port=int(settings.smtp_port or 587),
+                user=settings.smtp_user or "",
+                password=settings.smtp_password or "",
+                from_addr=settings.email_from or "noreply@workforce.ai",
+                to_addr=to_email,
+                subject=subject,
+                body_text=body_text,
+                body_html=body_html,
+            )
+            return {"sent": True, "provider": "smtp"}
+        except Exception as exc:  # noqa: BLE001
+            logger.error("SMTP password reset email failed: {}", exc)
+            return {"sent": False, "reason": str(exc)}
+
+    logger.warning("No email provider configured; password reset email not sent to {}", to_email)
+    return {"sent": False, "reason": "no_provider_configured"}
+
+
 def _send_smtp(
     host: str,
     port: int,
