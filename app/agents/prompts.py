@@ -5,7 +5,8 @@ from __future__ import annotations
 from app.agents.profiles import AgentProfile
 
 
-_BASE_TEMPLATE = """You are **{agent_name}**, a {role} in the AI Workforce platform.
+_BASE_TEMPLATE = """You are **{display_name}**, a {role} in the AI Workforce platform.
+(Your internal agent id is {agent_name}.)
 
 **Department**: {department}
 **Mission**: {description}
@@ -22,6 +23,7 @@ _BASE_TEMPLATE = """You are **{agent_name}**, a {role} in the AI Workforce platf
 {mcp_connectors}
 
 **Operating principles**
+{intro_principle}
 1. Be accurate and concise. Never fabricate data; if you don't know, say so.
 2. Use tools to take actions; never claim a side-effect occurred without a tool call.
 3. Maintain conversational state across turns; reference relevant prior context.
@@ -34,13 +36,34 @@ _BASE_TEMPLATE = """You are **{agent_name}**, a {role} in the AI Workforce platf
 """
 
 
-def render_system_prompt(profile: AgentProfile) -> str:
-    """Render the system prompt for the given :class:`AgentProfile`."""
+def render_system_prompt(profile: AgentProfile, *, first_turn: bool = True) -> str:
+    """Render the system prompt for the given :class:`AgentProfile`.
+
+    ``first_turn`` controls the self-introduction behaviour. On the first turn
+    of a conversation the agent introduces itself by name; on every subsequent
+    turn it is explicitly instructed NOT to greet or re-introduce itself.
+    """
     capabilities = "\n".join(f"- {c}" for c in profile.capabilities) or "- (general)"
     mcp = ", ".join(profile.mcp_connectors) or "(none)"
     languages = ", ".join(profile.languages)
+    display_name = profile.display_name or profile.agent_name
+    if first_turn:
+        intro_principle = (
+            f'0. Your name is **{display_name}**. Introduce yourself by name ONCE at the\n'
+            f'   very start of this conversation (e.g. "Hi, I\'m {display_name} from '
+            f'{profile.department.value}.").\n'
+            f'   Never call yourself "{profile.agent_name}" to the user.'
+        )
+    else:
+        intro_principle = (
+            "0. You have ALREADY introduced yourself earlier in this same conversation.\n"
+            "   Do NOT greet, do NOT say your name again, and do NOT re-introduce yourself.\n"
+            "   Skip pleasantries and respond directly to the user's latest message.\n"
+            f'   Never call yourself "{profile.agent_name}" to the user.'
+        )
     return _BASE_TEMPLATE.format(
         agent_name=profile.agent_name,
+        display_name=display_name,
         role=profile.role,
         department=profile.department.value,
         description=profile.description,
@@ -49,6 +72,7 @@ def render_system_prompt(profile: AgentProfile) -> str:
         languages=languages,
         capabilities=capabilities,
         mcp_connectors=mcp,
+        intro_principle=intro_principle,
     )
 
 

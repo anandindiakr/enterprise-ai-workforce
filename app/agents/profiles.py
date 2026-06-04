@@ -39,6 +39,7 @@ class AgentProfile:
     personality: str
     style: str
     model: str
+    display_name: str = ""  # friendly first name the agent introduces itself with
     max_loops: str | int = 1
     temperature: float = 0.4
     languages: tuple[str, ...] = ("en",)
@@ -56,6 +57,7 @@ class AgentProfile:
 DIRECTOR_PROFILE = AgentProfile(
     agent_name="WorkforceDirector",
     department=Department.EXECUTIVE,
+    display_name="Victoria",
     description=(
         "Executive director that decomposes enterprise tasks into subtasks, "
         "selects the right department agents, and synthesizes their outputs."
@@ -78,6 +80,7 @@ DIRECTOR_PROFILE = AgentProfile(
 RECEPTIONIST_PROFILE = AgentProfile(
     agent_name="ReceptionistAgent",
     department=Department.RECEPTION,
+    display_name="Riley",
     description=(
         "Friendly enterprise front desk. Greets users, identifies intent, "
         "and routes them to the correct department in chat or voice."
@@ -97,6 +100,7 @@ RECEPTIONIST_PROFILE = AgentProfile(
 CUSTOMER_CARE_PROFILE = AgentProfile(
     agent_name="CustomerCareAgent",
     department=Department.CUSTOMER_CARE,
+    display_name="Casey",
     description=(
         "Resolves customer support issues, answers product questions, "
         "and creates tickets when a problem cannot be resolved live."
@@ -114,6 +118,7 @@ CUSTOMER_CARE_PROFILE = AgentProfile(
 SALES_PROFILE = AgentProfile(
     agent_name="SalesAgent",
     department=Department.SALES,
+    display_name="Sam",
     description=(
         "Qualifies leads, answers product questions, schedules demos, "
         "updates the CRM, and drafts proposals."
@@ -131,6 +136,7 @@ SALES_PROFILE = AgentProfile(
 HR_PROFILE = AgentProfile(
     agent_name="HRAgent",
     department=Department.HR,
+    display_name="Harper",
     description=(
         "Handles employee questions about benefits, PTO, onboarding, "
         "policy lookups and HR ticket creation."
@@ -148,6 +154,7 @@ HR_PROFILE = AgentProfile(
 FINANCE_PROFILE = AgentProfile(
     agent_name="FinanceAgent",
     department=Department.FINANCE,
+    display_name="Fiona",
     description=(
         "Answers questions about invoices, expenses, AP/AR, budgets and "
         "financial reports. Reads from the ERP/accounting system."
@@ -165,6 +172,7 @@ FINANCE_PROFILE = AgentProfile(
 TECHNOLOGY_PROFILE = AgentProfile(
     agent_name="TechnologyAgent",
     department=Department.TECHNOLOGY,
+    display_name="Theo",
     description=(
         "First-line IT support. Diagnoses issues, walks users through fixes, "
         "creates incidents, and escalates to on-call when needed."
@@ -182,6 +190,7 @@ TECHNOLOGY_PROFILE = AgentProfile(
 MARKETING_PROFILE = AgentProfile(
     agent_name="MarketingAgent",
     department=Department.MARKETING,
+    display_name="Maya",
     description=(
         "Drafts campaigns, analyzes engagement, generates content, "
         "and assists with outbound communications."

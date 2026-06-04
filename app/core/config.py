@@ -35,7 +35,7 @@ class AppSettings(BaseSettings):
     # --- Security ---
     jwt_secret: str = "change-me"
     jwt_algorithm: str = "HS256"
-    jwt_expire_minutes: int = 60
+    jwt_expire_minutes: int = 480  # 8h — avoids silent mid-session 401s
     api_key_header: str = "X-API-Key"
     internal_api_key: str = "internal-svc-key"
     cors_origins: str = "http://localhost:3000,http://localhost:4000,http://localhost:8080"
@@ -48,6 +48,10 @@ class AppSettings(BaseSettings):
     chroma_host: str = "localhost"
     chroma_port: int = 8001
     chroma_collection: str = "workforce_knowledge"
+    chroma_persist_dir: str = "./.chroma"  # embedded fallback when no Chroma server
+
+    # --- Background jobs ---
+    use_celery: bool = False  # when False, embedding runs in-process (asyncio)
 
     # --- LLM ---
     openai_api_key: str = ""

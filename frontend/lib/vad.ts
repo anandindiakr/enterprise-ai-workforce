@@ -66,6 +66,16 @@ export class BrowserVAD {
     });
 
     this.ctx = new AudioContext({ sampleRate: this.sampleRate });
+    // After `await getUserMedia` the user-gesture context can be lost, leaving
+    // the AudioContext in a "suspended" state where `onaudioprocess` never
+    // fires — which makes auto-detect appear completely dead. Resume it.
+    if (this.ctx.state === "suspended") {
+      try {
+        await this.ctx.resume();
+      } catch {
+        /* best-effort; some browsers resume lazily on first audio */
+      }
+    }
     this.source = this.ctx.createMediaStreamSource(this.stream);
 
     // ScriptProcessor gives frame-level PCM access (deprecated but widely supported)

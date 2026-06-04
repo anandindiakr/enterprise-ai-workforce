@@ -144,6 +144,7 @@ class SessionContext(BaseModel):
 
 class AgentDescriptor(BaseModel):
     agent_name: str
+    display_name: str = ""
     department: Department
     description: str
     model: str

@@ -178,14 +178,14 @@ export default function AnalyticsPage() {
   function exportCSV() {
     const rows = [
       ["Metric", "Value"],
-      ["Total Chat Sessions",   platform?.chat.total_sessions        ?? ""],
-      ["Active Sessions",       platform?.chat.active_sessions       ?? ""],
-      ["Total Messages",        platform?.chat.total_messages        ?? ""],
-      ["Messages Today",        platform?.chat.messages_today        ?? ""],
-      ["Total Tokens Used",     platform?.chat.total_tokens_used     ?? ""],
-      ["Open Escalations",      platform?.escalations.open           ?? ""],
+      ["Total Chat Sessions",   platform?.chat?.total_sessions        ?? ""],
+      ["Active Sessions",       platform?.chat?.active_sessions       ?? ""],
+      ["Total Messages",        platform?.chat?.total_messages        ?? ""],
+      ["Messages Today",        platform?.chat?.messages_today        ?? ""],
+      ["Total Tokens Used",     platform?.chat?.total_tokens_used     ?? ""],
+      ["Open Escalations",      platform?.escalations?.open           ?? ""],
       ["Knowledge Documents",   platform?.knowledge_base.total_documents ?? ""],
-      ["Active Voice Sessions", platform?.voice.active_sessions      ?? ""],
+      ["Active Voice Sessions", platform?.voice?.active_sessions      ?? ""],
       ["Pipeline Value",        pipeline?.total_pipeline_value       ?? ""],
       ["Open Deals",            pipeline?.open_deals                 ?? ""],
       ["Budget Utilisation %",  budget?.utilisation_pct              ?? ""],
@@ -201,9 +201,9 @@ export default function AnalyticsPage() {
   }
 
   const maxPipeline = Math.max(...Object.values(pipeline?.pipeline                         ?? { x: 1 }));
-  const maxDept     = Math.max(...Object.values(platform?.chat.sessions_by_department      ?? { x: 1 }));
+  const maxDept     = Math.max(...Object.values(platform?.chat?.sessions_by_department      ?? { x: 1 }));
   const maxHC       = Math.max(...Object.values(hr?.headcount_by_department                ?? { x: 1 }));
-  const maxDaily    = Math.max(...(platform?.activity.daily_messages.map((d) => d.messages) ?? [1]));
+  const maxDaily    = Math.max(...(platform?.activity?.daily_messages?.map((d) => d.messages) ?? [1]));
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-[#030712]">
@@ -237,9 +237,9 @@ export default function AnalyticsPage() {
             <div>
               <h2 className="mb-3 font-mono text-[10px] uppercase tracking-widest text-slate-600">Platform Activity</h2>
               <div className="grid grid-cols-2 gap-4 lg:grid-cols-4">
-                <StatCard icon={MessageSquare} label="Total Messages"  value={num(platform?.chat.total_messages ?? 0)}          sub={`${platform?.chat.messages_today ?? 0} today`}                    color="text-amber-400"   bg="bg-amber-500/10"  />
-                <StatCard icon={Activity}      label="Chat Sessions"   value={num(platform?.chat.total_sessions ?? 0)}          sub={`${platform?.chat.active_sessions ?? 0} active`}                  color="text-cyan-400"    bg="bg-cyan-500/10"   />
-                <StatCard icon={AlertTriangle} label="Escalations"     value={String(platform?.escalations.open ?? 0)}         sub={`${platform?.escalations.total ?? 0} total`}                      color="text-red-400"     bg="bg-red-500/10"    />
+                <StatCard icon={MessageSquare} label="Total Messages"  value={num(platform?.chat?.total_messages ?? 0)}          sub={`${platform?.chat?.messages_today ?? 0} today`}                    color="text-amber-400"   bg="bg-amber-500/10"  />
+                <StatCard icon={Activity}      label="Chat Sessions"   value={num(platform?.chat?.total_sessions ?? 0)}          sub={`${platform?.chat?.active_sessions ?? 0} active`}                  color="text-cyan-400"    bg="bg-cyan-500/10"   />
+                <StatCard icon={AlertTriangle} label="Escalations"     value={String(platform?.escalations?.open ?? 0)}         sub={`${platform?.escalations?.total ?? 0} total`}                      color="text-red-400"     bg="bg-red-500/10"    />
                 <StatCard icon={BookOpen}      label="Knowledge Docs"  value={String(platform?.knowledge_base.total_documents ?? 0)} sub={`${platform?.audit.events_today ?? 0} audit events today`} color="text-violet-400"  bg="bg-violet-500/10" />
               </div>
             </div>
@@ -250,11 +250,11 @@ export default function AnalyticsPage() {
                 <h3 className="mb-4 flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-widest text-slate-400">
                   <Activity className="h-3.5 w-3.5 text-amber-400" /> Sessions by Department
                 </h3>
-                {Object.keys(platform?.chat.sessions_by_department ?? {}).length === 0 ? (
+                {Object.keys(platform?.chat?.sessions_by_department ?? {}).length === 0 ? (
                   <p className="text-xs text-slate-600">No sessions yet — start a chat to see data here.</p>
                 ) : (
                   <div className="space-y-3">
-                    {Object.entries(platform!.chat.sessions_by_department).map(([dept, cnt]) => (
+                    {Object.entries(platform?.chat?.sessions_by_department ?? {}).map(([dept, cnt]) => (
                       <BarRow key={dept} label={dept} value={cnt} max={maxDept} color="bg-amber-500" />
                     ))}
                   </div>
@@ -266,11 +266,11 @@ export default function AnalyticsPage() {
                 <h3 className="mb-4 flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-widest text-slate-400">
                   <TrendingUp className="h-3.5 w-3.5 text-emerald-400" /> Daily Messages (7 days)
                 </h3>
-                {(platform?.activity.daily_messages.length ?? 0) === 0 ? (
+                {(platform?.activity?.daily_messages.length ?? 0) === 0 ? (
                   <p className="text-xs text-slate-600">No message data yet.</p>
                 ) : (
                   <div className="space-y-3">
-                    {platform!.activity.daily_messages.map((d) => (
+                    {(platform?.activity?.daily_messages ?? []).map((d) => (
                       <BarRow key={d.date} label={d.date.slice(5)} value={d.messages} max={maxDaily} color="bg-emerald-500" />
                     ))}
                   </div>
@@ -284,9 +284,9 @@ export default function AnalyticsPage() {
                 </h3>
                 <div className="grid grid-cols-2 gap-4">
                   {([
-                    { label: "Total Tokens",   value: num(platform?.chat.total_tokens_used ?? 0),    icon: Zap,           color: "text-amber-400"   },
-                    { label: "Msgs This Week", value: num(platform?.chat.messages_this_week ?? 0),   icon: MessageSquare, color: "text-cyan-400"    },
-                    { label: "Voice Sessions", value: String(platform?.voice.active_sessions ?? 0),  icon: Mic,           color: "text-violet-400"  },
+                    { label: "Total Tokens",   value: num(platform?.chat?.total_tokens_used ?? 0),    icon: Zap,           color: "text-amber-400"   },
+                    { label: "Msgs This Week", value: num(platform?.chat?.messages_this_week ?? 0),   icon: MessageSquare, color: "text-cyan-400"    },
+                    { label: "Voice Sessions", value: String(platform?.voice?.active_sessions ?? 0),  icon: Mic,           color: "text-violet-400"  },
                     { label: "Audit Events",   value: String(platform?.audit.events_today ?? 0),     icon: Clock,         color: "text-slate-400"   },
                   ] as const).map(({ label, value, icon: Icon, color }) => (
                     <div key={label} className="rounded-lg bg-[#111827] p-3">
@@ -307,9 +307,9 @@ export default function AnalyticsPage() {
                 </h3>
                 <div className="grid grid-cols-3 gap-4">
                   {[
-                    { label: "Total", value: platform?.escalations.total ?? 0, color: "text-slate-300" },
-                    { label: "Open",  value: platform?.escalations.open  ?? 0, color: "text-red-400"   },
-                    { label: "Today", value: platform?.escalations.today ?? 0, color: "text-amber-400" },
+                    { label: "Total", value: platform?.escalations?.total ?? 0, color: "text-slate-300" },
+                    { label: "Open",  value: platform?.escalations?.open  ?? 0, color: "text-red-400"   },
+                    { label: "Today", value: platform?.escalations?.today ?? 0, color: "text-amber-400" },
                   ].map(({ label, value, color }) => (
                     <div key={label} className="rounded-lg bg-[#111827] p-3 text-center">
                       <p className="text-xs text-slate-500 mb-1">{label}</p>
@@ -336,7 +336,7 @@ export default function AnalyticsPage() {
                 </div>
 
                 <div className="grid grid-cols-1 gap-6 lg:grid-cols-2">
-                  {pipeline && (
+                  {pipeline && pipeline.pipeline && typeof pipeline.pipeline === "object" && (
                     <div className="rounded-xl border border-[#1f2937] bg-[#070d1a] p-5">
                       <h3 className="mb-4 flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-widest text-slate-400">
                         <DollarSign className="h-3.5 w-3.5 text-emerald-400" /> Sales Pipeline by Stage
@@ -349,7 +349,7 @@ export default function AnalyticsPage() {
                     </div>
                   )}
 
-                  {hr && (
+                  {hr && hr.headcount_by_department && typeof hr.headcount_by_department === "object" && (
                     <div className="rounded-xl border border-[#1f2937] bg-[#070d1a] p-5">
                       <h3 className="mb-4 flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-widest text-slate-400">
                         <Users className="h-3.5 w-3.5 text-violet-400" /> Headcount by Department

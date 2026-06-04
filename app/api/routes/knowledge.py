@@ -23,6 +23,9 @@ from app.security.auth import get_principal
 
 router = APIRouter(prefix="/knowledge", tags=["knowledge"])
 
+# Hard references to in-flight background embedding tasks (prevents GC).
+_EMBED_TASKS: set = set()
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Semantic search
@@ -101,19 +104,28 @@ async def upload_document(
         uploaded_by=principal.user_id,
     )
 
-    # Kick off embedding — Celery first, asyncio background task as fallback
+    # Kick off embedding.  By default we embed in-process via an asyncio task
+    # so the knowledge base works without a running Celery worker.  Celery is
+    # only used when explicitly enabled (settings.use_celery) AND a worker is
+    # available; otherwise documents would stay "pending" forever.
     _meta = {"title": doc_title, "category": category, "tenant_id": doc.tenant_id}
     _dispatched = False
-    try:
-        from app.workers.tasks import ingest_document
-        ingest_document.delay(str(doc.id), content, _meta)
-        _dispatched = True
-    except Exception:  # noqa: BLE001
-        pass
+    if settings.use_celery:
+        try:
+            from app.workers.tasks import ingest_document
+            ingest_document.delay(str(doc.id), content, _meta)
+            _dispatched = True
+        except Exception:  # noqa: BLE001
+            _dispatched = False
 
     if not _dispatched:
         import asyncio
-        asyncio.create_task(_embed_document(str(doc.id), content, _meta))
+        # Keep a hard reference to the background task. asyncio only holds a
+        # weak reference, so without this the embedding task can be
+        # garbage-collected mid-flight, leaving the doc stuck at "pending".
+        _task = asyncio.create_task(_embed_document(str(doc.id), content, _meta))
+        _EMBED_TASKS.add(_task)
+        _task.add_done_callback(_EMBED_TASKS.discard)
 
     logger.info("Knowledge doc uploaded: {} ({} bytes)", doc.id, len(raw))
     return {
@@ -323,3 +335,19 @@ async def _embed_document(doc_id: str, content: str, metadata: dict) -> None:
         logger.info("Knowledge doc embedded (asyncio fallback): {}", doc_id)
     except Exception as exc:  # noqa: BLE001
         logger.error("Knowledge embedding failed for {}: {}", doc_id, exc)
+        # Mark as failed so the UI does not hang forever on "pending".
+        try:
+            import uuid as _uuid2
+            from sqlalchemy import update as _update2
+            from app.db.models import KnowledgeDocumentModel as _KDM
+            from app.db.session import AsyncSessionLocal as _ASL
+
+            async with _ASL() as _db:
+                await _db.execute(
+                    _update2(_KDM)
+                    .where(_KDM.id == _uuid2.UUID(doc_id))
+                    .values(embedding_status="failed")
+                )
+                await _db.commit()
+        except Exception:  # noqa: BLE001
+            pass

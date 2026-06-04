@@ -78,12 +78,24 @@ export default function VoicePage() {
   const wsAudioCtxRef       = useRef<AudioContext | null>(null);
   const audioQueueRef       = useRef<string[]>([]);   // FIFO of object URLs
   const audioPlayingRef     = useRef<boolean>(false);
+  // Refs mirror the latest department / session so ref-based callbacks
+  // (PTT onstop, VAD onSilence) never operate on a stale closure value.
+  const deptIdRef           = useRef(deptId);
+  const sessionIdRef        = useRef(sessionId);
 
   const dept = getDept(deptId);
   const Icon = dept.icon;
 
+  /* Keep refs in sync with state */
+  useEffect(() => { deptIdRef.current = deptId; }, [deptId]);
+  useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+
   /* Init */
-  useEffect(() => { setSessionId(genId()); }, []);
+  useEffect(() => {
+    const sid = genId();
+    setSessionId(sid);
+    sessionIdRef.current = sid;
+  }, []);
   useEffect(() => {
     const p = new URLSearchParams(window.location.search);
     const d = p.get("dept");
@@ -314,11 +326,12 @@ export default function VoicePage() {
    */
   const _agentTurn = useCallback(async (userText: string, fromDept: string, depth = 0) => {
     const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+    const sid  = sessionIdRef.current;
     try {
       const chatRes = await fetch(`${base}/api/v1/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ message: userText, department: fromDept, session_id: sessionId }),
+        body: JSON.stringify({ message: userText, department: fromDept, session_id: sid }),
       });
       const chatData = await chatRes.json();
 
@@ -335,6 +348,9 @@ export default function VoicePage() {
         const target = transferredTo as string;
         const label  = DEPARTMENTS.find((d) => d.id === target)?.label ?? target;
         _appendLine("agent", `[ Transferred to ${label} ]`);
+        // Update ref immediately so the recursive turn AND all subsequent
+        // utterances route to the new department (state update is async).
+        deptIdRef.current = target;
         setDeptId(target);
         // 1) Spoken handoff from the current agent.
         await _speak(`I'm connecting you to our ${label} team now. One moment please.`, fromDept);
@@ -352,16 +368,18 @@ export default function VoicePage() {
     } finally {
       setVoiceState("idle");
     }
-  }, [sessionId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const _processBlob = useCallback((blob: Blob) => {
     if (blob.size < 1000) { setVoiceState("idle"); return; }
     const base     = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+    const curDept  = deptIdRef.current;
+    const sid      = sessionIdRef.current;
     const form     = new FormData();
     const phId     = genId();
     form.append("audio",      blob, "recording.webm");
-    form.append("department", deptId);
-    form.append("session_id", sessionId);
+    form.append("department", curDept);
+    form.append("session_id", sid);
 
     _appendLineId(phId, "user", "🎤 Transcribing…");
 
@@ -371,13 +389,13 @@ export default function VoicePage() {
         const text = data.transcript ?? "Could not transcribe.";
         _updateLine(phId, text);
         setVoiceState("processing");
-        await _agentTurn(text, deptId);
+        await _agentTurn(text, deptIdRef.current);
       })
       .catch(() => {
         _updateLine(phId, "⚠️ Could not reach the API.");
         setVoiceState("idle");
       });
-  }, [deptId, sessionId, _agentTurn]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [_agentTurn]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /* ── Helpers ─────────────────────────────────────────────── */
 

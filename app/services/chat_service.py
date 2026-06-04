@@ -44,6 +44,36 @@ def _extract_agent_text(raw: str, task: str = "") -> str:
     return extract_agent_text(raw, task=task)
 
 
+def _retrieve_kb_context(query: str, tenant_id: str | None = None, *, k: int = 4) -> str:
+    """Best-effort retrieval of relevant knowledge-base snippets.
+
+    Returns a formatted string of the top matches, or "" if the knowledge
+    base is empty / unavailable. Never raises — RAG is an enhancement, not a
+    hard dependency of a chat turn.
+    """
+    try:
+        from app.memory.long_term import long_term_memory
+
+        where = {"tenant_id": tenant_id} if tenant_id else None
+        try:
+            hits = long_term_memory().search(query, k=k, where=where)
+        except Exception:
+            # tenant filter may exclude everything / be unsupported — retry open
+            hits = long_term_memory().search(query, k=k)
+
+        snippets: list[str] = []
+        for h in hits:
+            txt = (h.get("text") or "").strip()
+            if not txt:
+                continue
+            title = (h.get("metadata") or {}).get("title", "document")
+            snippets.append(f"[{title}] {txt[:600]}")
+        return "\n\n".join(snippets[:k])
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("KB retrieval skipped: {}", exc)
+        return ""
+
+
 class ChatService:
     """Encapsulates a single chat turn (REST or WS)."""
 
@@ -62,6 +92,11 @@ class ChatService:
             metadata=request.metadata,
         )
 
+        # Determine whether this is the opening turn of the conversation so the
+        # agent only introduces itself once (checked BEFORE recording this msg).
+        prior_history = await memory.recent_history(session_id, limit=2)
+        first_turn = len(prior_history) == 0
+
         # Persist the user message
         await memory.record_message(
             ctx,
@@ -76,13 +111,24 @@ class ChatService:
 
         start = time.perf_counter()
         try:
+            # Augment the task with relevant knowledge-base context (RAG) so
+            # agents (esp. Sales/Marketing/Care) can answer about uploaded
+            # products, policies and documents.
+            task = request.message
+            kb = _retrieve_kb_context(request.message, request.tenant_id)
+            if kb:
+                task = (
+                    f"{request.message}\n\n"
+                    f"[Enterprise knowledge base — use to answer accurately]\n{kb}"
+                )
+
             wf = await router.execute(
                 WorkflowRequest(
-                    task=request.message,
+                    task=task,
                     department=department,
                     user_id=request.user_id,
                     tenant_id=request.tenant_id,
-                    context=request.metadata,
+                    context={**(request.metadata or {}), "first_turn": first_turn},
                 )
             )
             duration = time.perf_counter() - start
@@ -187,27 +233,78 @@ async def stream_chat_tokens(request: ChatRequest):
     try:
         from openai import AsyncOpenAI
         from app.agents.profiles import PROFILES_BY_DEPARTMENT
+        from app.agents.prompts import render_system_prompt
         from app.core.types import Department
 
         department = request.department or Department.RECEPTION
         profile = PROFILES_BY_DEPARTMENT.get(department)
-        system_prompt = profile.system_prompt if profile else "You are a helpful AI assistant."
+
+        session_id = request.session_id or uuid4().hex
+        memory = memory_manager()
+        ctx = SessionContext(
+            session_id=session_id,
+            user_id=request.user_id,
+            tenant_id=request.tenant_id,
+            channel=Channel.CHAT,
+            department=department,
+            metadata=request.metadata,
+        )
+
+        # Pull recent conversation so the model keeps context across turns and
+        # only introduces itself once (first_turn == no prior history).
+        prior_history = await memory.recent_history(session_id, limit=12)
+        first_turn = len(prior_history) == 0
+
+        system_prompt = (
+            render_system_prompt(profile, first_turn=first_turn) if profile
+            else "You are a helpful AI assistant."
+        )
+
+        # Inject knowledge-base context so the agent can answer about products,
+        # policies, etc. that the enterprise has uploaded.
+        kb = _retrieve_kb_context(request.message, request.tenant_id)
+        if kb:
+            system_prompt += (
+                "\n\n# Enterprise knowledge base (use this to answer)\n" + kb
+            )
+
+        # Build the OpenAI message list: system + prior turns + current message.
+        messages: list[dict] = [{"role": "system", "content": system_prompt}]
+        for msg in prior_history:
+            role_val = getattr(msg.role, "value", msg.role)
+            oai_role = "assistant" if role_val in ("agent", "assistant") else "user"
+            if msg.content:
+                messages.append({"role": oai_role, "content": msg.content})
+        messages.append({"role": "user", "content": request.message})
+
+        # Persist the user message before streaming the answer.
+        await memory.record_message(
+            ctx,
+            Message(session_id=session_id, role=Role.USER, content=request.message),
+        )
 
         client = AsyncOpenAI(api_key=openai_key)
         stream = await client.chat.completions.create(
             model=getattr(settings, "openai_model", "gpt-4o-mini"),
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user",   "content": request.message},
-            ],
+            messages=messages,
             stream=True,
             temperature=0.7,
             max_tokens=1024,
         )
+        chunks: list[str] = []
         async for chunk in stream:
             delta = chunk.choices[0].delta.content if chunk.choices else None
             if delta:
+                chunks.append(delta)
                 yield delta
+
+        # Persist the assistant reply so the next turn has continuity.
+        full = "".join(chunks).strip()
+        if full:
+            await memory.record_message(
+                ctx,
+                Message(session_id=session_id, role=Role.AGENT, content=full),
+            )
     except Exception as exc:  # noqa: BLE001
         logger.warning("OpenAI streaming failed, falling back: {}", exc)
         resp = await chat_service().handle(request)

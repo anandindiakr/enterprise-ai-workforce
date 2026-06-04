@@ -94,7 +94,9 @@ class WorkforceRouter:
     # Plan + execute
     # ------------------------------------------------------------------
 
-    def _agents_for(self, plan_strategy: SwarmStrategy, department: Department) -> list:
+    def _agents_for(
+        self, plan_strategy: SwarmStrategy, department: Department, *, first_turn: bool = True
+    ) -> list:
         if self._department_agents is None:
             self._department_agents = build_all_department_agents()
 
@@ -103,12 +105,14 @@ class WorkforceRouter:
             return [director, *self._department_agents.values()]
 
         # For everything else, single-department execution is the safe default.
-        return [build_department_agent(department)]
+        # Build fresh so the first-turn introduction guard is honoured.
+        return [build_department_agent(department, first_turn=first_turn)]
 
     def plan(self, request: WorkflowRequest) -> _DispatchPlan:
         department = request.department or self.choose_department(request.task)
         strategy = request.strategy or self.choose_strategy(request.task, department)
-        agents = self._agents_for(strategy, department)
+        first_turn = bool(request.context.get("first_turn", True))
+        agents = self._agents_for(strategy, department, first_turn=first_turn)
         return _DispatchPlan(strategy=strategy, department=department, agents=agents)
 
     async def execute(self, request: WorkflowRequest) -> WorkflowResult:

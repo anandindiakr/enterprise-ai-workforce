@@ -49,6 +49,7 @@ async def list_agents(_: Principal = Depends(get_principal)) -> dict:
     agents = [
         AgentDescriptor(
             agent_name=p.agent_name,
+            display_name=p.display_name or p.agent_name,
             department=p.department,
             description=p.description,
             model=p.model,
@@ -228,20 +229,22 @@ async def platform_analytics(
     active_voice = len(voice_session_manager().all())
 
     # ── Daily activity (last 7 days, message count per day) ────────
-    daily_rows = (
+    # Bucket in Python so this works on both SQLite (local/dev) and Postgres
+    # (prod) — ``date_trunc`` is Postgres-only and crashes on SQLite.
+    ts_rows = (
         await db.execute(
-            select(
-                func.date_trunc("day", ChatMessageModel.created_at).label("day"),
-                func.count().label("cnt"),
-            )
-            .where(ChatMessageModel.created_at >= week_ago)
-            .group_by("day")
-            .order_by("day")
+            select(ChatMessageModel.created_at).where(ChatMessageModel.created_at >= week_ago)
         )
     ).all()
+    _buckets: dict[str, int] = {}
+    for (created,) in ts_rows:
+        if created is None:
+            continue
+        key = created.date().isoformat()
+        _buckets[key] = _buckets.get(key, 0) + 1
     daily_activity = [
-        {"date": str(row.day.date()) if row.day else "", "messages": row.cnt}
-        for row in daily_rows
+        {"date": day, "messages": cnt}
+        for day, cnt in sorted(_buckets.items())
     ]
 
     return {

@@ -140,6 +140,13 @@ class VoiceSessionManager:
 
         from app.models.schemas import WorkflowRequest
 
+        # Introduce the active department's agent only the first time it speaks
+        # in this session (handles fresh sessions AND post-transfer handoffs).
+        introduced = session.metadata.setdefault("introduced_departments", [])
+        first_turn = session.department.value not in introduced
+        if first_turn:
+            introduced.append(session.department.value)
+
         start = time.perf_counter()
         result = await workforce_router().execute(
             WorkflowRequest(
@@ -147,7 +154,11 @@ class VoiceSessionManager:
                 department=session.department,
                 user_id=session.user_id,
                 tenant_id=session.tenant_id,
-                context={"channel": "voice", "history": [t for t in session.transcripts[-10:]]},
+                context={
+                    "channel": "voice",
+                    "history": [t for t in session.transcripts[-10:]],
+                    "first_turn": first_turn,
+                },
             )
         )
         voice_turn_latency_seconds.labels(session.realtime_provider).observe(

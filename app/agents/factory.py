@@ -94,10 +94,14 @@ def _build_agent(profile: AgentProfile, *, system_prompt: str | None = None) -> 
     return agent
 
 
-def build_department_agent(department: Department) -> Agent:
-    """Build a single department agent."""
+def build_department_agent(department: Department, *, first_turn: bool = True) -> Agent:
+    """Build a single department agent.
+
+    ``first_turn`` is forwarded to the system prompt so the agent only
+    introduces itself on the opening turn of a conversation.
+    """
     profile = PROFILES_BY_DEPARTMENT[department]
-    return _build_agent(profile)
+    return _build_agent(profile, system_prompt=render_system_prompt(profile, first_turn=first_turn))
 
 
 def build_all_department_agents() -> dict[Department, Agent]:
