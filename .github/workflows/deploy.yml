@@ -1,0 +1,55 @@
+name: Deploy to VPS
+
+# Auto-deploys the latest main to the Hostinger VPS over SSH.
+# Triggers on every push to main, and can also be run manually from the
+# GitHub Actions tab (workflow_dispatch).
+#
+# Required repository secrets (Settings -> Secrets and variables -> Actions):
+#   VPS_HOST     - VPS IP address or hostname (e.g. 31.97.x.x)
+#   VPS_USER     - SSH user (e.g. root)
+#   VPS_SSH_KEY  - the PRIVATE SSH key (full contents, including the
+#                  -----BEGIN ... ----- / -----END ... ----- lines)
+#   VPS_PATH     - absolute path to the repo on the VPS
+#                  (e.g. /root/enterprise-ai-workforce)
+#   VPS_SSH_PORT - (optional) SSH port; defaults to 22 if not set
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+concurrency:
+  group: vps-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: SSH deploy + rebuild
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.0
+        with:
+          host: ${{ secrets.VPS_HOST }}
+          username: ${{ secrets.VPS_USER }}
+          key: ${{ secrets.VPS_SSH_KEY }}
+          port: ${{ secrets.VPS_SSH_PORT || 22 }}
+          command_timeout: 30m
+          script: |
+            set -e
+            cd "${{ secrets.VPS_PATH }}"
+            echo "==> Pulling latest main"
+            git fetch origin main
+            git reset --hard origin/main
+            echo "==> Rebuilding changed services"
+            docker compose up --build -d api frontend
+            echo "==> Waiting for API health"
+            for i in $(seq 1 30); do
+              if curl -fsS http://localhost:8080/api/v1/health >/dev/null 2>&1; then
+                echo "API healthy"; break
+              fi
+              echo "waiting for api... ($i)"; sleep 3
+            done
+            echo "==> Container status"
+            docker compose ps
+            echo "==> Deploy complete"
