@@ -204,8 +204,9 @@ export default function VoicePage() {
         _processBlob(blob);
       },
     });
-    vad.start().catch(() => {
-      _appendLine("agent", "⚠️ Microphone access denied for VAD mode.");
+    vad.start().catch((err) => {
+      const reason = err?.message ? `: ${err.message}` : "";
+      _appendLine("agent", `⚠️ Could not start Auto-Detect${reason}. Switching to Push-to-Talk.`);
       setInputMode("ptt");
     });
     vadRef.current = vad;

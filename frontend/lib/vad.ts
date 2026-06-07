@@ -65,7 +65,12 @@ export class BrowserVAD {
       },
     });
 
-    this.ctx = new AudioContext({ sampleRate: this.sampleRate });
+    // Do NOT force a sampleRate on the AudioContext: many devices only support
+    // their native rate (usually 44.1/48 kHz) and throw `NotSupportedError`
+    // when 16 kHz is requested — which silently killed auto-detect. The RMS
+    // energy calc below is sample-rate independent, and the captured blob is
+    // resampled server-side, so the context rate does not matter here.
+    this.ctx = new AudioContext();
     // After `await getUserMedia` the user-gesture context can be lost, leaving
     // the AudioContext in a "suspended" state where `onaudioprocess` never
     // fires — which makes auto-detect appear completely dead. Resume it.
@@ -78,8 +83,11 @@ export class BrowserVAD {
     }
     this.source = this.ctx.createMediaStreamSource(this.stream);
 
-    // ScriptProcessor gives frame-level PCM access (deprecated but widely supported)
-    const bufSize = Math.floor(this.ctx.sampleRate * 0.02); // 20 ms frames
+    // ScriptProcessor REQUIRES a power-of-two buffer size (256/512/1024/…).
+    // A computed "20 ms frame" (e.g. 320 @16k or 960 @48k) is NOT a power of
+    // two and makes createScriptProcessor throw `IndexSizeError`, which used
+    // to crash start() and fall back to Push-to-Talk. Use a fixed 1024.
+    const bufSize = 1024;
     this.processor = this.ctx.createScriptProcessor(bufSize, 1, 1);
 
     this.processor.onaudioprocess = (e) => {
