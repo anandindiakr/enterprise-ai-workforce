@@ -1,13 +1,14 @@
-# ── Stage 1: deps ─────────────────────────────────────────────────────────────
-FROM node:20-alpine AS deps
+# ── Stage 1: builder ──────────────────────────────────────────────────────────
+# Install dependencies AND build in the same stage. Installing in the same stage
+# that runs `next build` guarantees the `next` binary exists in node_modules/.bin
+# (the previous cross-stage `COPY --from=deps` could miss it / reuse a corrupted
+# cache layer, causing "sh: next: not found", exit 127).
+FROM node:20-alpine AS builder
 WORKDIR /app
+
 COPY package.json package-lock.json* ./
 RUN npm ci --legacy-peer-deps
 
-# ── Stage 2: builder ──────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
-WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
 ARG NEXT_PUBLIC_API_URL=http://localhost:8080
@@ -18,7 +19,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN npm run build
 
-# ── Stage 3: runner ───────────────────────────────────────────────────────────
+# ── Stage 2: runner ───────────────────────────────────────────────────────────
 FROM node:20-alpine AS runner
 WORKDIR /app
 
