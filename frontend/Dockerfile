@@ -1,15 +1,13 @@
 # ── Stage 1: builder ──────────────────────────────────────────────────────────
-# Install dependencies AND build in the same stage. Installing in the same stage
-# that runs `next build` guarantees the `next` binary exists in node_modules/.bin
-# (the previous cross-stage `COPY --from=deps` could miss it / reuse a corrupted
-# cache layer, causing "sh: next: not found", exit 127).
+# Robust against a stale / wrong-platform node_modules existing on the host
+# (e.g. a Windows or partial install left in the build context). We copy the
+# source first, then WIPE node_modules and do a clean linux install right before
+# building, so `next build` always uses a freshly-installed linux `next` binary.
 FROM node:20-alpine AS builder
 WORKDIR /app
 
-COPY package.json package-lock.json* ./
-RUN npm ci --legacy-peer-deps
-
 COPY . .
+RUN rm -rf node_modules .next && npm ci --legacy-peer-deps
 
 ARG NEXT_PUBLIC_API_URL=http://localhost:8080
 ARG NEXT_PUBLIC_WS_URL=ws://localhost:8080
