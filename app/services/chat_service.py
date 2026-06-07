@@ -44,13 +44,17 @@ def _extract_agent_text(raw: str, task: str = "") -> str:
     return extract_agent_text(raw, task=task)
 
 
-def _retrieve_kb_context(query: str, tenant_id: str | None = None, *, k: int = 4) -> str:
-    """Best-effort retrieval of relevant knowledge-base snippets.
+_KB_STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "to", "of", "in", "on", "for",
+    "is", "are", "was", "were", "be", "do", "does", "did", "with", "what",
+    "which", "who", "how", "can", "could", "would", "should", "i", "you",
+    "we", "they", "it", "this", "that", "your", "our", "my", "me", "us",
+    "about", "tell", "please", "want", "need", "know", "have", "has",
+}
 
-    Returns a formatted string of the top matches, or "" if the knowledge
-    base is empty / unavailable. Never raises — RAG is an enhancement, not a
-    hard dependency of a chat turn.
-    """
+
+def _vector_kb_context(query: str, tenant_id: str | None, k: int) -> list[str]:
+    """Vector (ChromaDB) retrieval. Returns a list of formatted snippets."""
     try:
         from app.memory.long_term import long_term_memory
 
@@ -58,7 +62,6 @@ def _retrieve_kb_context(query: str, tenant_id: str | None = None, *, k: int = 4
         try:
             hits = long_term_memory().search(query, k=k, where=where)
         except Exception:
-            # tenant filter may exclude everything / be unsupported — retry open
             hits = long_term_memory().search(query, k=k)
 
         snippets: list[str] = []
@@ -68,10 +71,73 @@ def _retrieve_kb_context(query: str, tenant_id: str | None = None, *, k: int = 4
                 continue
             title = (h.get("metadata") or {}).get("title", "document")
             snippets.append(f"[{title}] {txt[:600]}")
-        return "\n\n".join(snippets[:k])
+        return snippets
     except Exception as exc:  # noqa: BLE001
-        logger.debug("KB retrieval skipped: {}", exc)
-        return ""
+        logger.debug("Vector KB retrieval skipped: {}", exc)
+        return []
+
+
+async def _db_keyword_kb_context(query: str, tenant_id: str | None, k: int) -> list[str]:
+    """Postgres keyword-search fallback over ``KnowledgeDocumentModel.content``.
+
+    This guarantees agents can see uploaded documents even when vector
+    embeddings are unavailable (Chroma down / sentence-transformers missing).
+    Never raises.
+    """
+    try:
+        from sqlalchemy import or_, select
+
+        from app.db.models import KnowledgeDocumentModel
+        from app.db.session import AsyncSessionLocal
+
+        keywords = [
+            w for w in re.findall(r"[A-Za-z0-9]+", query.lower())
+            if len(w) > 2 and w not in _KB_STOPWORDS
+        ][:8]
+
+        async with AsyncSessionLocal() as session:
+            stmt = select(KnowledgeDocumentModel)
+            if tenant_id:
+                stmt = stmt.where(KnowledgeDocumentModel.tenant_id == tenant_id)
+            if keywords:
+                stmt = stmt.where(
+                    or_(*[
+                        KnowledgeDocumentModel.content.ilike(f"%{w}%")
+                        for w in keywords
+                    ])
+                )
+            stmt = stmt.order_by(KnowledgeDocumentModel.created_at.desc()).limit(max(k * 2, 8))
+            rows = (await session.execute(stmt)).scalars().all()
+
+        # Rank by how many distinct keywords appear in the content.
+        scored: list[tuple[int, str]] = []
+        for doc in rows:
+            content = (doc.content or "").strip()
+            if not content:
+                continue
+            lc = content.lower()
+            score = sum(1 for w in keywords if w in lc) if keywords else 1
+            scored.append((score, f"[{doc.title}] {content[:600]}"))
+        scored.sort(key=lambda t: t[0], reverse=True)
+        return [s for _, s in scored[:k]]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("DB keyword KB retrieval skipped: {}", exc)
+        return []
+
+
+async def _retrieve_kb_context(query: str, tenant_id: str | None = None, *, k: int = 4) -> str:
+    """Best-effort retrieval of relevant knowledge-base snippets.
+
+    Tries semantic (vector) search first, then falls back to a Postgres
+    keyword search so uploaded documents are always reachable even when
+    embeddings are unavailable. Returns a formatted string of the top
+    matches, or "" if nothing relevant is found. Never raises — RAG is an
+    enhancement, not a hard dependency of a chat turn.
+    """
+    snippets = _vector_kb_context(query, tenant_id, k)
+    if not snippets:
+        snippets = await _db_keyword_kb_context(query, tenant_id, k)
+    return "\n\n".join(snippets[:k])
 
 
 class ChatService:
@@ -81,7 +147,34 @@ class ChatService:
         session_id = request.session_id or uuid4().hex
         memory = memory_manager()
         router = workforce_router()
-        department = request.department or router.choose_department(request.message)
+
+        # Pull recent history once: used both for first-turn detection AND to
+        # make the active department "sticky" across turns. Without this the
+        # department was re-guessed from each message, so a transfer reset back
+        # to the keyword-matched department on the very next turn.
+        prior_history = await memory.recent_history(session_id, limit=10)
+        first_turn = len(prior_history) == 0
+
+        session_department: Department | None = None
+        for msg in reversed(prior_history):
+            if msg.role == Role.AGENT and msg.department:
+                try:
+                    session_department = (
+                        msg.department
+                        if isinstance(msg.department, Department)
+                        else Department(msg.department)
+                    )
+                except Exception:  # noqa: BLE001
+                    session_department = None
+                break
+
+        # Department precedence: explicit request > sticky session dept >
+        # keyword routing on the message text.
+        department = (
+            request.department
+            or session_department
+            or router.choose_department(request.message)
+        )
 
         ctx = SessionContext(
             session_id=session_id,
@@ -91,11 +184,6 @@ class ChatService:
             department=department,
             metadata=request.metadata,
         )
-
-        # Determine whether this is the opening turn of the conversation so the
-        # agent only introduces itself once (checked BEFORE recording this msg).
-        prior_history = await memory.recent_history(session_id, limit=2)
-        first_turn = len(prior_history) == 0
 
         # Persist the user message
         await memory.record_message(
@@ -115,7 +203,7 @@ class ChatService:
             # agents (esp. Sales/Marketing/Care) can answer about uploaded
             # products, policies and documents.
             task = request.message
-            kb = _retrieve_kb_context(request.message, request.tenant_id)
+            kb = await _retrieve_kb_context(request.message, request.tenant_id)
             if kb:
                 task = (
                     f"{request.message}\n\n"
@@ -141,6 +229,12 @@ class ChatService:
             escalation, transferred = _detect_control_signals(text)
             text = _strip_control_signals(text)  # remove JSON directives before display
 
+            # An agent saying "let me connect you with sales" while it IS the
+            # sales agent is not a real transfer. Ignore self-transfers so we
+            # don't loop the handoff phrase or wipe the agent's real answer.
+            if transferred is not None and transferred == department:
+                transferred = None
+
             # Deterministic fallback: honour an explicit transfer request in the
             # *user* message even when the LLM never emitted a control directive.
             if transferred is None:
@@ -153,18 +247,21 @@ class ChatService:
                 escalations_total.labels(department.value, escalation.value).inc()
             final_dept = transferred or department
 
-            # If transfer stripped the entire message, provide a natural handoff phrase
-            if not text.strip() and transferred:
+            # If a control directive stripped the entire message, synthesise a
+            # natural phrase: a handoff line for a real transfer, otherwise an
+            # in-department acknowledgement (so the reply is never blank).
+            if not text.strip():
                 dept_labels = {
                     "reception": "Reception", "customer_care": "Customer Care",
                     "sales": "Sales", "hr": "Human Resources", "finance": "Finance",
                     "technology": "Technology", "marketing": "Marketing",
                 }
-                label = dept_labels.get(
-                    str(transferred.value if hasattr(transferred, "value") else transferred),
-                    str(transferred).replace("_", " ").title()
-                )
-                text = f"Let me connect you with our {label} team right away."
+                _key = str(final_dept.value if hasattr(final_dept, "value") else final_dept)
+                label = dept_labels.get(_key, str(final_dept).replace("_", " ").title())
+                if transferred:
+                    text = f"Let me connect you with our {label} team right away."
+                else:
+                    text = f"You're with our {label} team. How can I help you today?"
 
             agent_msg = Message(
                 session_id=session_id,
@@ -262,7 +359,7 @@ async def stream_chat_tokens(request: ChatRequest):
 
         # Inject knowledge-base context so the agent can answer about products,
         # policies, etc. that the enterprise has uploaded.
-        kb = _retrieve_kb_context(request.message, request.tenant_id)
+        kb = await _retrieve_kb_context(request.message, request.tenant_id)
         if kb:
             system_prompt += (
                 "\n\n# Enterprise knowledge base (use this to answer)\n" + kb

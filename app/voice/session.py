@@ -148,9 +148,24 @@ class VoiceSessionManager:
             introduced.append(session.department.value)
 
         start = time.perf_counter()
+        # Inject knowledge-base context so voice agents (esp. Sales/Marketing/
+        # Care) answer from uploaded documents, not just generic knowledge.
+        task = text
+        try:
+            from app.services.chat_service import _retrieve_kb_context
+
+            kb = await _retrieve_kb_context(text, session.tenant_id)
+            if kb:
+                task = (
+                    f"{text}\n\n"
+                    f"[Enterprise knowledge base — use to answer accurately]\n{kb}"
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.debug("Voice KB retrieval skipped: {}", exc)
+
         result = await workforce_router().execute(
             WorkflowRequest(
-                task=text,
+                task=task,
                 department=session.department,
                 user_id=session.user_id,
                 tenant_id=session.tenant_id,
