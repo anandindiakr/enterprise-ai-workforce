@@ -15,7 +15,15 @@ ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
 ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
 ENV NEXT_TELEMETRY_DISABLED=1
 
-RUN npm run build
+# Invoke Next.js DIRECTLY via node instead of `npm run build` / the `.bin/next`
+# shim. On some VPS kernels/overlay filesystems npm fails to create the
+# node_modules/.bin symlinks even though the real `next` package installed fine,
+# producing "sh: next: not found" (exit 127). Calling the package's real entry
+# file (node_modules/next/dist/bin/next) does not depend on that symlink, so the
+# build works regardless of whether bin-linking succeeded.
+RUN echo "── node_modules/.bin/next:" && (ls -l node_modules/.bin/next || echo "  (.bin/next MISSING — using direct node invocation)") \
+ && echo "── node_modules/next/dist/bin/next:" && ls -l node_modules/next/dist/bin/next \
+ && node node_modules/next/dist/bin/next build
 
 # ── Stage 2: runner ───────────────────────────────────────────────────────────
 FROM node:20-alpine AS runner
