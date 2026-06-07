@@ -36,6 +36,7 @@ export class BrowserVAD {
 
   private isSpeaking = false;
   private silenceTimer: ReturnType<typeof setTimeout> | null = null;
+  private closing = false;
 
   private readonly threshold: number;
   private readonly silenceMs: number;
@@ -107,16 +108,24 @@ export class BrowserVAD {
     this.source.connect(this.processor);
     this.processor.connect(this.ctx.destination);
 
-    // MediaRecorder captures the full utterance as a Blob
-    this._startRecorder();
+    // NOTE: we do NOT start a recorder here. A fresh recorder is created per
+    // utterance in `_beginUtterance()` the moment speech is first detected, so
+    // every captured blob is a complete, standalone webm with a valid header.
   }
 
   /** Stop VAD and release all resources. */
   stop(): void {
+    this.closing = true;
     this.silenceTimer && clearTimeout(this.silenceTimer);
     this.processor?.disconnect();
     this.source?.disconnect();
-    this.mediaRecorder?.stop();
+    try {
+      if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
+        this.mediaRecorder.stop();
+      }
+    } catch {
+      /* ignore */
+    }
     this.stream?.getTracks().forEach((t) => t.stop());
     this.ctx?.close();
     this.ctx       = null;
@@ -145,7 +154,7 @@ export class BrowserVAD {
     }
     if (!this.isSpeaking) {
       this.isSpeaking = true;
-      this._restartRecorder();
+      this._beginUtterance();
       this.onSpeech?.();
     }
   }
@@ -156,45 +165,50 @@ export class BrowserVAD {
     this.silenceTimer = setTimeout(() => {
       this.isSpeaking   = false;
       this.silenceTimer = null;
-      this._flushRecording();
+      this._endUtterance();
     }, this.silenceMs);
   }
 
-  private _startRecorder(): void {
+  /**
+   * Start a brand-new MediaRecorder for a single utterance. We do NOT pass a
+   * timeslice to `start()`, so the recorder buffers internally and emits ONE
+   * `ondataavailable` on `stop()`. The blob is then assembled in `onstop`,
+   * guaranteeing a complete, standalone webm container with a valid header
+   * (the old stop/restart-with-timeslice approach produced headerless opus
+   * fragments that Deepgram decoded to an empty transcript).
+   */
+  private _beginUtterance(): void {
     if (!this.stream) return;
     const mimeType = this._bestMime();
     try {
-      this.mediaRecorder  = new MediaRecorder(this.stream, { mimeType });
       this.recordedChunks = [];
+      this.mediaRecorder  = new MediaRecorder(this.stream, mimeType ? { mimeType } : undefined);
       this.mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) this.recordedChunks.push(e.data);
+        if (e.data && e.data.size > 0) this.recordedChunks.push(e.data);
       };
-      this.mediaRecorder.start(100); // collect every 100 ms
+      this.mediaRecorder.onstop = () => {
+        const type = mimeType || "audio/webm";
+        const blob = new Blob(this.recordedChunks, { type });
+        this.recordedChunks = [];
+        // Suppress emission during session teardown so a final stray blob
+        // doesn't trigger another transcribe/agent turn after the user hangs up.
+        if (!this.closing) this.onSilence?.(blob);
+      };
+      this.mediaRecorder.start(); // no timeslice → single clean clip on stop()
     } catch {
       this.mediaRecorder = null;
     }
   }
 
-  private _restartRecorder(): void {
-    this.mediaRecorder?.stop();
-    this.recordedChunks = [];
-    this._startRecorder();
-  }
-
-  private _flushRecording(): void {
-    if (!this.mediaRecorder) {
-      this.onSilence?.(new Blob());
-      return;
+  /** Stop the current utterance recorder; `onstop` builds and emits the blob. */
+  private _endUtterance(): void {
+    try {
+      if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
+        this.mediaRecorder.stop();
+      }
+    } catch {
+      /* ignore */
     }
-    this.mediaRecorder.stop();
-    // ondataavailable flushes remaining data, then we build the Blob
-    setTimeout(() => {
-      const mimeType = this._bestMime();
-      const blob = new Blob(this.recordedChunks, { type: mimeType });
-      this.recordedChunks = [];
-      this.onSilence?.(blob);
-      this._startRecorder();
-    }, 150);
   }
 
   private _bestMime(): string {
