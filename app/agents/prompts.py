@@ -27,21 +27,45 @@ _BASE_TEMPLATE = """You are **{display_name}**, a {role} in the AI Workforce pla
 1. Be accurate and concise. Never fabricate data; if you don't know, say so.
 2. Use tools to take actions; never claim a side-effect occurred without a tool call.
 3. Maintain conversational state across turns; reference relevant prior context.
-4. Detect intent quickly. If the request belongs to another department, hand off
-   by replying with a JSON line like ``{{"transfer": "<department>", "reason": "..."}}``.
-5. Detect frustration, urgency, or explicit requests for a human and escalate
-   with ``{{"escalate": "<level>", "reason": "..."}}`` (levels: supervisor, human, emergency).
-6. Voice mode: keep replies short (1-3 sentences), avoid markdown, use natural prosody.
+{routing_principles}
 7. Always respect tenant isolation, privacy, and least-privilege tool access.
 """
 
 
-def render_system_prompt(profile: AgentProfile, *, first_turn: bool = True) -> str:
+# Routing/escalation guidance for *text chat*: the LLM may emit JSON directives
+# which the chat service parses and strips before display.
+_CHAT_PRINCIPLES = """4. Detect intent quickly. If the request belongs to another department, hand off
+   by replying with a JSON line like ``{{"transfer": "<department>", "reason": "..."}}``.
+5. Detect frustration, urgency, or explicit requests for a human and escalate
+   with ``{{"escalate": "<level>", "reason": "..."}}`` (levels: supervisor, human, emergency).
+6. Keep replies focused; use light markdown only when it genuinely helps."""
+
+
+# Guidance for *live voice* calls. Critically, the agent must NEVER output JSON
+# or control directives — those would be read aloud verbatim by TTS. Explicit
+# department transfers are detected deterministically by the system BEFORE this
+# agent is ever invoked, so the agent's only job here is to converse naturally.
+_VOICE_PRINCIPLES = """4. You are on a LIVE VOICE call. Just answer the caller directly and naturally.
+   You ARE the {department} agent — if the caller asks who they are speaking with,
+   tell them your name ({display_name}) and that you are from the {department} team.
+5. NEVER output JSON, braces, code, or words like "transfer"/"escalate"/"reason".
+   Department hand-offs are handled automatically by the system when the caller
+   explicitly asks; you must not try to do it yourself. Simply keep helping.
+6. Speak in 1-3 short sentences, no markdown, natural conversational prosody."""
+
+
+def render_system_prompt(
+    profile: AgentProfile, *, first_turn: bool = True, voice: bool = False
+) -> str:
     """Render the system prompt for the given :class:`AgentProfile`.
 
     ``first_turn`` controls the self-introduction behaviour. On the first turn
     of a conversation the agent introduces itself by name; on every subsequent
     turn it is explicitly instructed NOT to greet or re-introduce itself.
+
+    ``voice`` selects the live-call principles: in voice mode the agent is told
+    to answer conversationally and to NEVER emit JSON/control directives (which
+    would otherwise be read aloud by TTS).
     """
     capabilities = "\n".join(f"- {c}" for c in profile.capabilities) or "- (general)"
     mcp = ", ".join(profile.mcp_connectors) or "(none)"
@@ -61,6 +85,9 @@ def render_system_prompt(profile: AgentProfile, *, first_turn: bool = True) -> s
             "   Skip pleasantries and respond directly to the user's latest message.\n"
             f'   Never call yourself "{profile.agent_name}" to the user.'
         )
+    routing_principles = (
+        _VOICE_PRINCIPLES if voice else _CHAT_PRINCIPLES
+    ).format(department=profile.department.value, display_name=display_name)
     return _BASE_TEMPLATE.format(
         agent_name=profile.agent_name,
         display_name=display_name,
@@ -73,6 +100,7 @@ def render_system_prompt(profile: AgentProfile, *, first_turn: bool = True) -> s
         capabilities=capabilities,
         mcp_connectors=mcp,
         intro_principle=intro_principle,
+        routing_principles=routing_principles,
     )
 
 

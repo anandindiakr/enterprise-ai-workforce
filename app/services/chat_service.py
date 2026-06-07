@@ -404,8 +404,8 @@ class ChatService:
 
                 profile = PROFILES_BY_DEPARTMENT.get(department)
                 system_prompt = (
-                    render_system_prompt(profile, first_turn=first_turn) if profile
-                    else "You are a helpful AI assistant."
+                    render_system_prompt(profile, first_turn=first_turn, voice=True)
+                    if profile else "You are a helpful AI assistant."
                 )
                 kb = await _retrieve_kb_context(request.message, request.tenant_id)
                 if kb:
@@ -436,8 +436,45 @@ class ChatService:
             # still gets a real answer rather than silence.
             return await self.handle(request)
 
+        # Defence in depth: even though the voice prompt forbids JSON/directives,
+        # parse and STRIP any control signals the model may have leaked so they
+        # are never spoken aloud by TTS. A leaked transfer is honoured as a real
+        # hand-off; a leaked escalation sets the escalation level.
+        from app.voice.session import _detect_control_signals, _strip_control_signals
+
+        leaked_escalation, leaked_transfer = _detect_control_signals(text)
+        text = _strip_control_signals(text)
+
         chat_latency_seconds.labels(department.value).observe(time.perf_counter() - start)
         chat_requests_total.labels(department.value, "success").inc()
+
+        # If the model leaked a transfer to a *different* department, perform the
+        # hand-off deterministically instead of speaking the JSON.
+        if leaked_transfer is not None and leaked_transfer != department:
+            target = leaked_transfer
+            target_profile = PROFILES_BY_DEPARTMENT.get(target)
+            handoff = f"Of course — connecting you to our {target.value.title()} team now."
+            agent_msg = Message(
+                session_id=session_id,
+                role=Role.AGENT,
+                content=handoff,
+                department=target,
+                agent_name=getattr(target_profile, "agent_name", None) or "Workforce",
+            )
+            await memory.record_message(ctx, agent_msg)
+            return ChatResponse(
+                session_id=session_id,
+                message=agent_msg,
+                agent_name=agent_msg.agent_name or "Workforce",
+                department=target,
+                escalation=leaked_escalation,
+                transferred_to=target,
+            )
+
+        # If stripping the directives left nothing to say, synthesise a short,
+        # natural in-department reply rather than going silent.
+        if not text.strip():
+            text = "I'm here and happy to help — could you tell me a bit more about what you need?"
 
         agent_msg = Message(
             session_id=session_id,
@@ -452,7 +489,7 @@ class ChatService:
             message=agent_msg,
             agent_name=agent_msg.agent_name or "Workforce",
             department=department,
-            escalation=EscalationLevel.NONE,
+            escalation=leaked_escalation,
             transferred_to=None,
         )
 
