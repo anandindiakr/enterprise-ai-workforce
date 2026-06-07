@@ -1,0 +1,23 @@
+# Never copy host-installed dependencies or build output into the image.
+# The builder stage installs Linux node_modules in the `deps` stage; copying
+# the host's (possibly Windows) node_modules over them breaks the `next` binary
+# ("sh: next: not found"). Excluding them here keeps the build hermetic.
+node_modules
+.next
+out
+
+# Logs & local env
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.env.local
+.env*.local
+
+# VCS / Docker / editor
+.git
+.gitignore
+Dockerfile
+.dockerignore
+README.md
+.vscode
+.idea
