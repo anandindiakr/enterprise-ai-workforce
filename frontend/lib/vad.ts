@@ -37,6 +37,7 @@ export class BrowserVAD {
   private isSpeaking = false;
   private silenceTimer: ReturnType<typeof setTimeout> | null = null;
   private closing = false;
+  private paused = false;
 
   private readonly threshold: number;
   private readonly silenceMs: number;
@@ -92,6 +93,10 @@ export class BrowserVAD {
     this.processor = this.ctx.createScriptProcessor(bufSize, 1, 1);
 
     this.processor.onaudioprocess = (e) => {
+      // While paused (agent is thinking / speaking) we ignore the mic entirely
+      // so the agent's own TTS playback and room echo don't get captured and
+      // re-transcribed, which previously piled up endless "Transcribing…" turns.
+      if (this.paused) return;
       const input  = e.inputBuffer.getChannelData(0);
       const rms    = this._rms(input);
       const level  = Math.min(rms * 10, 1); // normalise to 0-1
@@ -111,6 +116,34 @@ export class BrowserVAD {
     // NOTE: we do NOT start a recorder here. A fresh recorder is created per
     // utterance in `_beginUtterance()` the moment speech is first detected, so
     // every captured blob is a complete, standalone webm with a valid header.
+  }
+
+  /** Temporarily ignore mic input (e.g. while the agent is speaking). */
+  pause(): void {
+    this.paused = true;
+    if (this.silenceTimer) {
+      clearTimeout(this.silenceTimer);
+      this.silenceTimer = null;
+    }
+    // Abort any in-flight utterance without emitting it.
+    if (this.isSpeaking) {
+      this.isSpeaking = false;
+      try {
+        if (this.mediaRecorder && this.mediaRecorder.state !== "inactive") {
+          this.mediaRecorder.onstop = null;
+          this.mediaRecorder.stop();
+        }
+      } catch {
+        /* ignore */
+      }
+      this.recordedChunks = [];
+    }
+  }
+
+  /** Resume listening after a pause. */
+  resume(): void {
+    this.paused = false;
+    this.isSpeaking = false;
   }
 
   /** Stop VAD and release all resources. */

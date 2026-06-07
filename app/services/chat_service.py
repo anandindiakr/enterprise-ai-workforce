@@ -296,6 +296,166 @@ class ChatService:
                 department=department,
             )
 
+    async def handle_fast(self, request: ChatRequest) -> ChatResponse:
+        """Low-latency single-turn handler optimised for *voice*.
+
+        Voice conversations need sub-2s turns. The full Swarms hierarchy
+        (``handle``) runs agent loops + tool calls and can take 5-15s, which
+        makes a spoken conversation feel broken. ``handle_fast`` instead:
+
+        * resolves the sticky department exactly like ``handle``;
+        * honours an explicit transfer request **deterministically** (no LLM
+          round-trip) so "transfer me to finance" switches instantly;
+        * otherwise issues a single direct OpenAI call (gpt-4o-mini) with the
+          department system prompt, knowledge-base context and recent history.
+
+        Falls back to ``handle`` when no OpenAI key is configured.
+        """
+        import os
+
+        from app.core.config import settings
+
+        session_id = request.session_id or uuid4().hex
+        memory = memory_manager()
+        router = workforce_router()
+
+        prior_history = await memory.recent_history(session_id, limit=12)
+        first_turn = len(prior_history) == 0
+
+        session_department: Department | None = None
+        for msg in reversed(prior_history):
+            if msg.role == Role.AGENT and msg.department:
+                try:
+                    session_department = (
+                        msg.department
+                        if isinstance(msg.department, Department)
+                        else Department(msg.department)
+                    )
+                except Exception:  # noqa: BLE001
+                    session_department = None
+                break
+
+        department = (
+            request.department
+            or session_department
+            or router.choose_department(request.message)
+        )
+
+        ctx = SessionContext(
+            session_id=session_id,
+            user_id=request.user_id,
+            tenant_id=request.tenant_id,
+            channel=Channel.VOICE,
+            department=department,
+            metadata=request.metadata,
+        )
+
+        # Persist the user message up front.
+        await memory.record_message(
+            ctx,
+            Message(
+                session_id=session_id,
+                role=Role.USER,
+                content=request.message,
+                department=department,
+            ),
+        )
+
+        dept_labels = {
+            "reception": "Reception", "customer_care": "Customer Care",
+            "sales": "Sales", "hr": "Human Resources", "finance": "Finance",
+            "technology": "Technology", "marketing": "Marketing",
+        }
+
+        # 1) Deterministic transfer — instant, no LLM. Switch department and
+        #    return a short spoken handoff phrase. The caller (voice page) then
+        #    runs a follow-up turn against the NEW department so it actually
+        #    answers out loud.
+        intent = detect_transfer_intent(request.message)
+        if intent is not None and intent != department:
+            label = dept_labels.get(intent.value, intent.value.replace("_", " ").title())
+            text = f"Of course — connecting you to our {label} team now."
+            agent_msg = Message(
+                session_id=session_id,
+                role=Role.AGENT,
+                content=text,
+                department=intent,  # record under target so it becomes sticky
+                agent_name=PROFILES_BY_DEPARTMENT[intent].agent_name,
+            )
+            await memory.record_message(ctx, agent_msg)
+            return ChatResponse(
+                session_id=session_id,
+                message=agent_msg,
+                agent_name=agent_msg.agent_name or "Workforce",
+                department=intent,
+                escalation=EscalationLevel.NONE,
+                transferred_to=intent,
+            )
+
+        # 2) Single fast LLM reply.
+        start = time.perf_counter()
+        text = ""
+        openai_key = getattr(settings, "openai_api_key", None) or os.getenv("OPENAI_API_KEY", "")
+        if openai_key:
+            try:
+                from openai import AsyncOpenAI
+
+                from app.agents.prompts import render_system_prompt
+
+                profile = PROFILES_BY_DEPARTMENT.get(department)
+                system_prompt = (
+                    render_system_prompt(profile, first_turn=first_turn) if profile
+                    else "You are a helpful AI assistant."
+                )
+                kb = await _retrieve_kb_context(request.message, request.tenant_id)
+                if kb:
+                    system_prompt += "\n\n# Enterprise knowledge base (use this to answer)\n" + kb
+
+                messages: list[dict] = [{"role": "system", "content": system_prompt}]
+                for msg in prior_history:
+                    role_val = getattr(msg.role, "value", msg.role)
+                    oai_role = "assistant" if role_val in ("agent", "assistant") else "user"
+                    if msg.content:
+                        messages.append({"role": oai_role, "content": msg.content})
+                messages.append({"role": "user", "content": request.message})
+
+                client = AsyncOpenAI(api_key=openai_key)
+                completion = await client.chat.completions.create(
+                    model=getattr(settings, "openai_model", "gpt-4o-mini"),
+                    messages=messages,
+                    temperature=0.6,
+                    max_tokens=400,  # keep spoken replies concise
+                )
+                text = (completion.choices[0].message.content or "").strip()
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("Fast voice LLM failed, falling back to full handler: {}", exc)
+                text = ""
+
+        if not text:
+            # No key or LLM failed → use the full (slower) handler so the user
+            # still gets a real answer rather than silence.
+            return await self.handle(request)
+
+        chat_latency_seconds.labels(department.value).observe(time.perf_counter() - start)
+        chat_requests_total.labels(department.value, "success").inc()
+
+        agent_msg = Message(
+            session_id=session_id,
+            role=Role.AGENT,
+            content=text,
+            department=department,
+            agent_name=PROFILES_BY_DEPARTMENT[department].agent_name,
+        )
+        await memory.record_message(ctx, agent_msg)
+        return ChatResponse(
+            session_id=session_id,
+            message=agent_msg,
+            agent_name=agent_msg.agent_name or "Workforce",
+            department=department,
+            escalation=EscalationLevel.NONE,
+            transferred_to=None,
+        )
+
 
 _service: ChatService | None = None
 

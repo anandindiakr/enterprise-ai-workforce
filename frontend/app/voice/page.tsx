@@ -200,6 +200,10 @@ export default function VoicePage() {
       onSpeech:   () => { setVadSpeaking(true); setVoiceState("listening"); },
       onSilence:  (blob) => {
         setVadSpeaking(false);
+        // Stop listening the instant we have an utterance: the agent is about
+        // to think + speak, and we must NOT capture its own TTS or pile up
+        // overlapping turns. The mic is resumed once playback finishes.
+        vadRef.current?.pause();
         setVoiceState("processing");
         _processBlob(blob);
       },
@@ -329,7 +333,7 @@ export default function VoicePage() {
     const base = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
     const sid  = sessionIdRef.current;
     try {
-      const chatRes = await fetch(`${base}/api/v1/chat`, {
+      const chatRes = await fetch(`${base}/api/v1/chat?fast=1`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ message: userText, department: fromDept, session_id: sid }),
@@ -368,11 +372,17 @@ export default function VoicePage() {
       _appendLine("agent", "⚠️ Could not reach the API.");
     } finally {
       setVoiceState("idle");
+      // If no audio is queued/playing (e.g. TTS failed or empty reply), the
+      // drain handler won't fire — make sure the mic comes back so the
+      // conversation can continue in Auto-Detect mode.
+      if (!audioPlayingRef.current && audioQueueRef.current.length === 0) {
+        vadRef.current?.resume();
+      }
     }
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const _processBlob = useCallback((blob: Blob) => {
-    if (blob.size < 1000) { setVoiceState("idle"); return; }
+    if (blob.size < 1000) { setVoiceState("idle"); vadRef.current?.resume(); return; }
     const base     = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
     const curDept  = deptIdRef.current;
     const sid      = sessionIdRef.current;
@@ -387,7 +397,15 @@ export default function VoicePage() {
     fetch(`${base}/api/v1/voice/transcribe`, { method: "POST", headers: authHeaders(), body: form })
       .then((r) => r.json())
       .then(async (data: any) => {
-        const text = data.transcript ?? "Could not transcribe.";
+        const text = (data.transcript ?? "").trim();
+        // Empty transcript → silence / unintelligible. Don't waste an agent
+        // turn; just drop the placeholder line and resume listening.
+        if (!text) {
+          _updateLine(phId, "…");
+          setVoiceState("idle");
+          vadRef.current?.resume();
+          return;
+        }
         _updateLine(phId, text);
         setVoiceState("processing");
         await _agentTurn(text, deptIdRef.current);
@@ -395,6 +413,7 @@ export default function VoicePage() {
       .catch(() => {
         _updateLine(phId, "⚠️ Could not reach the API.");
         setVoiceState("idle");
+        vadRef.current?.resume();
       });
   }, [_agentTurn]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -414,7 +433,12 @@ export default function VoicePage() {
   function _drainAudioQueue() {
     if (audioPlayingRef.current) return;
     const url = audioQueueRef.current.shift();
-    if (!url) { setVoiceState("idle"); return; }
+    if (!url) {
+      setVoiceState("idle");
+      // Agent finished speaking → start listening again (Auto-Detect mode).
+      vadRef.current?.resume();
+      return;
+    }
     audioPlayingRef.current = true;
     setVoiceState("speaking");
     const audio = new Audio(url);

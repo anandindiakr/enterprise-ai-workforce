@@ -38,10 +38,16 @@ router = APIRouter(prefix="/chat", tags=["chat"])
 async def chat(
     request: ChatRequest,
     req: Request,
+    fast: bool = Query(False, description="Use the low-latency single-call path (voice)"),
     principal: Principal = Depends(optional_principal),
     db=Depends(get_db),
 ) -> ChatResponse:
-    """Single-turn chat. The platform infers department if none provided."""
+    """Single-turn chat. The platform infers department if none provided.
+
+    When ``fast=1`` the request is served by the low-latency handler tuned for
+    voice (deterministic transfers + a single LLM call) instead of the full
+    Swarms hierarchy.
+    """
     if request.tenant_id is None:
         request.tenant_id = principal.tenant_id
     if not request.user_id:
@@ -60,7 +66,9 @@ async def chat(
                 department=request.department or "reception",
             )
 
-    response = await chat_service().handle(request)
+    response = await (
+        chat_service().handle_fast(request) if fast else chat_service().handle(request)
+    )
 
     # Persist messages
     if session_id:
