@@ -134,14 +134,17 @@ services:
       context: ./frontend
       dockerfile: Dockerfile
       args:
-        NEXT_PUBLIC_API_URL: http://localhost:8080
-        NEXT_PUBLIC_WS_URL: ws://localhost:8080
+        # Must be the PUBLIC address the browser can reach (NOT localhost) because
+        # NEXT_PUBLIC_* values are baked into the JS bundle at build time and run
+        # in the visitor's browser. Override per-deployment if the IP/domain changes.
+        NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://187.127.112.32:8080}
+        NEXT_PUBLIC_WS_URL: ${PUBLIC_WS_URL:-ws://187.127.112.32:8080}
     container_name: ai-workforce-frontend
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8080
-      NEXT_PUBLIC_WS_URL: ws://localhost:8080
+      NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-http://187.127.112.32:8080}
+      NEXT_PUBLIC_WS_URL: ${PUBLIC_WS_URL:-ws://187.127.112.32:8080}
     ports:
-      - "3000:3000"
+      - "3100:3000"
     depends_on:
       - api
     restart: unless-stopped

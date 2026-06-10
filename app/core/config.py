@@ -38,7 +38,10 @@ class AppSettings(BaseSettings):
     jwt_expire_minutes: int = 480  # 8h — avoids silent mid-session 401s
     api_key_header: str = "X-API-Key"
     internal_api_key: str = "internal-svc-key"
-    cors_origins: str = "http://localhost:3000,http://localhost:4000,http://localhost:8080"
+    # Comma-separated allowed browser origins. Use "*" to allow any origin
+    # (handy when accessing the app via a raw VPS IP/port that isn't known at
+    # build time). Override via the CORS_ORIGINS env var for a locked-down prod.
+    cors_origins: str = "*"
 
     # --- Persistence ---
     postgres_dsn: str = "postgresql+asyncpg://workforce:workforce@localhost:5432/workforce"

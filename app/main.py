@@ -113,14 +113,26 @@ def create_app() -> FastAPI:
         openapi_url="/openapi.json",
     )
 
-    # CORS
-    app.add_middleware(
-        CORSMiddleware,
-        allow_origins=settings.cors_origin_list,
-        allow_credentials=True,
-        allow_methods=["*"],
-        allow_headers=["*"],
-    )
+    # CORS. A bare allow_origins=["*"] is rejected by browsers together with
+    # allow_credentials=True, so when the wildcard is configured we fall back to
+    # an origin regex that echoes the caller's origin back (credentials-safe).
+    _origins = settings.cors_origin_list
+    if "*" in _origins:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origin_regex=".*",
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
+    else:
+        app.add_middleware(
+            CORSMiddleware,
+            allow_origins=_origins,
+            allow_credentials=True,
+            allow_methods=["*"],
+            allow_headers=["*"],
+        )
 
     # Rate limit
     limiter = Limiter(key_func=get_remote_address, default_limits=[f"{settings.rate_limit_per_min}/minute"])
