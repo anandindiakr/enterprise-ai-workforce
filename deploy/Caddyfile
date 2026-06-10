@@ -1,0 +1,29 @@
+# Caddy reverse proxy for the AI Workforce platform.
+# Automatic HTTPS (Let's Encrypt) is provisioned for both the apex and www
+# hostnames as soon as their DNS A-records point at this server and ports
+# 80/443 are reachable from the internet.
+#
+# Routing:
+#   /api/*  -> FastAPI backend (REST + WebSocket upgrades) on the internal
+#              docker network at api:8080
+#   else    -> Next.js frontend at frontend:3000
+#
+# The apex domain (algoworkforce.com) permanently redirects to the canonical
+# www host so there is a single origin (matches NEXT_PUBLIC_API_URL/WS).
+
+algoworkforce.com {
+	redir https://www.algoworkforce.com{uri} permanent
+}
+
+www.algoworkforce.com {
+	encode gzip zstd
+
+	@api path /api/*
+	handle @api {
+		reverse_proxy api:8080
+	}
+
+	handle {
+		reverse_proxy frontend:3000
+	}
+}
