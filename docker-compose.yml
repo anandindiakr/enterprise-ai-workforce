@@ -144,7 +144,7 @@ services:
       NEXT_PUBLIC_API_URL: ${PUBLIC_API_URL:-https://www.algoworkforce.com}
       NEXT_PUBLIC_WS_URL: ${PUBLIC_WS_URL:-wss://www.algoworkforce.com}
     ports:
-      - "3100:3000"
+      - "3200:3000"
     depends_on:
       - api
     restart: unless-stopped
