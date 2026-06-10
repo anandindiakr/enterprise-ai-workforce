@@ -149,27 +149,7 @@ services:
       - api
     restart: unless-stopped
 
-  # Reverse proxy + automatic HTTPS (Let's Encrypt) for the public domain.
-  # Routes /api/* (REST + WebSockets) to the API and everything else to the
-  # Next.js frontend, so the whole app is served from https://www.algoworkforce.com.
-  caddy:
-    image: caddy:2-alpine
-    container_name: ai-workforce-caddy
-    depends_on:
-      - frontend
-      - api
-    ports:
-      - "80:80"
-      - "443:443"
-    volumes:
-      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
-      - caddy_data:/data
-      - caddy_config:/config
-    restart: unless-stopped
-
 volumes:
   redis_data:
   chroma_data:
   postgres_data:
-  caddy_data:
-  caddy_config:
