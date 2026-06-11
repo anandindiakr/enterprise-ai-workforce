@@ -108,27 +108,29 @@ async def close_voice_session(
 async def transcribe_audio(
     audio: UploadFile = File(...),
     department: Optional[str] = Form(None),
+    language: Optional[str] = Form("en"),
     principal: Principal = Depends(optional_principal),  # noqa: ARG001
 ) -> dict:
     """
     Accept a browser audio blob (webm/ogg/wav) and return the transcript.
     Uses Deepgram when DEEPGRAM_API_KEY is set, falls back to OpenAI Whisper.
+    ``language`` defaults to "en" to prevent Whisper auto-detecting background audio.
     """
     audio_bytes = await audio.read()
+    lang = language or "en"
 
     deepgram_key = os.getenv("DEEPGRAM_API_KEY", "")
     if deepgram_key:
         try:
             transcript = await _deepgram_stt(audio_bytes, audio.content_type or "audio/webm")
             return {"transcript": transcript, "provider": "deepgram"}
-        except Exception as exc:  # noqa: BLE001
-            # Fall through to Whisper
-            pass
+        except Exception:  # noqa: BLE001
+            pass  # Fall through to Whisper
 
     openai_key = os.getenv("OPENAI_API_KEY", "")
     if openai_key:
         try:
-            transcript = await _whisper_stt(audio_bytes, audio.filename or "audio.webm")
+            transcript = await _whisper_stt(audio_bytes, audio.filename or "audio.webm", language=lang)
             return {"transcript": transcript, "provider": "whisper"}
         except Exception as exc:  # noqa: BLE001
             raise HTTPException(status_code=502, detail=f"STT failed: {exc}") from exc
@@ -163,14 +165,20 @@ async def _deepgram_stt(audio_bytes: bytes, content_type: str) -> str:
     return transcript.strip()
 
 
-async def _whisper_stt(audio_bytes: bytes, filename: str) -> str:
-    """Call OpenAI Whisper via the files API."""
+async def _whisper_stt(audio_bytes: bytes, filename: str, language: str = "en") -> str:
+    """Call OpenAI Whisper via the files API.
+
+    ``language`` is passed as an ISO-639-1 hint (e.g. "en") so Whisper does
+    not auto-detect the language from background audio.  This prevents the
+    agent replying in Korean / Japanese / etc. when ambient TV audio is present.
+    """
     import aiohttp  # type: ignore
 
     url = "https://api.openai.com/v1/audio/transcriptions"
     headers = {"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"}
     form = aiohttp.FormData()
     form.add_field("model", "whisper-1")
+    form.add_field("language", language)
     form.add_field("file", audio_bytes, filename=filename, content_type="audio/webm")
     async with aiohttp.ClientSession() as session:
         async with session.post(url, headers=headers, data=form) as resp:
