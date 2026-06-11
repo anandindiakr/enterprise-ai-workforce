@@ -168,9 +168,9 @@ async def _deepgram_stt(audio_bytes: bytes, content_type: str) -> str:
 async def _whisper_stt(audio_bytes: bytes, filename: str, language: str = "en") -> str:
     """Call OpenAI Whisper via the files API.
 
-    ``language`` is passed as an ISO-639-1 hint (e.g. "en") so Whisper does
-    not auto-detect the language from background audio.  This prevents the
-    agent replying in Korean / Japanese / etc. when ambient TV audio is present.
+    Pass ``language="auto"`` (or empty) to let Whisper detect the language
+    automatically.  Use an ISO-639-1 code (e.g. "en", "hi", "ta") to force a
+    specific language and avoid ambient-audio misdetection.
     """
     import aiohttp  # type: ignore
 
@@ -178,7 +178,9 @@ async def _whisper_stt(audio_bytes: bytes, filename: str, language: str = "en") 
     headers = {"Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}"}
     form = aiohttp.FormData()
     form.add_field("model", "whisper-1")
-    form.add_field("language", language)
+    # Only pass language when explicitly chosen — "auto" / empty = let Whisper decide.
+    if language and language.lower() not in ("auto", ""):
+        form.add_field("language", language)
     form.add_field("file", audio_bytes, filename=filename, content_type="audio/webm")
     async with aiohttp.ClientSession() as session:
         async with session.post(url, headers=headers, data=form) as resp:

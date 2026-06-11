@@ -58,6 +58,7 @@ export default function VoicePage() {
   const [deptId,          setDeptId]         = useState("reception");
   const [voiceState,      setVoiceState]     = useState<VoiceState>("idle");
   const [inputMode,       setInputMode]      = useState<InputMode>("ptt");
+  const [sttLang,         setSttLang]        = useState<string>("en");
   const [transcript,      setTranscript]     = useState<TranscriptLine[]>([]);
   const [duration,        setDuration]       = useState(0);
   const [sessionId,       setSessionId]      = useState("");
@@ -82,13 +83,15 @@ export default function VoicePage() {
   // (PTT onstop, VAD onSilence) never operate on a stale closure value.
   const deptIdRef           = useRef(deptId);
   const sessionIdRef        = useRef(sessionId);
+  const sttLangRef          = useRef(sttLang);
 
   const dept = getDept(deptId);
   const Icon = dept.icon;
 
   /* Keep refs in sync with state */
-  useEffect(() => { deptIdRef.current = deptId; }, [deptId]);
+  useEffect(() => { deptIdRef.current   = deptId;   }, [deptId]);
   useEffect(() => { sessionIdRef.current = sessionId; }, [sessionId]);
+  useEffect(() => { sttLangRef.current  = sttLang;  }, [sttLang]);
 
   /* Init */
   useEffect(() => {
@@ -391,6 +394,7 @@ export default function VoicePage() {
     form.append("audio",      blob, "recording.webm");
     form.append("department", curDept);
     form.append("session_id", sid);
+    form.append("language",   sttLangRef.current || "en");
 
     _appendLineId(phId, "user", "🎤 Transcribing…");
 
@@ -551,6 +555,60 @@ export default function VoicePage() {
             </>
           ) : (
             <p className="text-[9px] text-slate-700">{providerError ?? "Loading…"}</p>
+          )}
+        </div>
+
+        {/* Language selector */}
+        <div className="border-t border-[#1f2937] p-3 space-y-1.5">
+          <p className="font-mono text-[9px] uppercase tracking-widest text-slate-600">Language</p>
+          <select
+            value={sttLang}
+            onChange={(e) => setSttLang(e.target.value)}
+            disabled={voiceState !== "idle"}
+            className="w-full rounded-md border border-[#1f2937] bg-[#070d1a] px-2 py-1.5 text-[10px] text-slate-300 focus:border-amber-500/50 focus:outline-none disabled:opacity-50"
+          >
+            <optgroup label="Auto">
+              <option value="auto">Auto-detect</option>
+            </optgroup>
+            <optgroup label="English varieties">
+              <option value="en">English</option>
+              <option value="en">Singlish (English)</option>
+            </optgroup>
+            <optgroup label="Indian Languages">
+              <option value="hi">Hindi (हिन्दी)</option>
+              <option value="ta">Tamil (தமிழ்)</option>
+              <option value="te">Telugu (తెలుగు)</option>
+              <option value="bn">Bengali (বাংলা)</option>
+              <option value="mr">Marathi (मराठी)</option>
+              <option value="gu">Gujarati (ગુજરાતી)</option>
+              <option value="kn">Kannada (ಕನ್ನಡ)</option>
+              <option value="ml">Malayalam (മലയാളം)</option>
+              <option value="pa">Punjabi (ਪੰਜਾਬੀ)</option>
+              <option value="ur">Urdu (اردو)</option>
+            </optgroup>
+            <optgroup label="Chinese / SE Asian">
+              <option value="zh">Chinese / Hokkien (approx.)</option>
+              <option value="ms">Malay / Bahasa</option>
+              <option value="id">Indonesian</option>
+              <option value="th">Thai</option>
+              <option value="vi">Vietnamese</option>
+              <option value="ja">Japanese</option>
+              <option value="ko">Korean</option>
+            </optgroup>
+            <optgroup label="Other">
+              <option value="ar">Arabic</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="es">Spanish</option>
+              <option value="pt">Portuguese</option>
+              <option value="ru">Russian</option>
+            </optgroup>
+          </select>
+          {sttLang === "auto" && (
+            <p className="text-[9px] text-amber-500/70">Auto-detect may pick up background audio in other languages</p>
+          )}
+          {sttLang === "zh" && (
+            <p className="text-[9px] text-slate-600">Hokkien/Teochew: Whisper maps to Mandarin — accuracy is limited</p>
           )}
         </div>
       </aside>
