@@ -70,7 +70,7 @@ def _vector_kb_context(query: str, tenant_id: str | None, k: int) -> list[str]:
             if not txt:
                 continue
             title = (h.get("metadata") or {}).get("title", "document")
-            snippets.append(f"[{title}] {txt[:600]}")
+            snippets.append(f"[{title}] {txt[:2000]}")
         return snippets
     except Exception as exc:  # noqa: BLE001
         logger.debug("Vector KB retrieval skipped: {}", exc)
@@ -106,7 +106,7 @@ async def _db_keyword_kb_context(query: str, tenant_id: str | None, k: int) -> l
                         for w in keywords
                     ])
                 )
-            stmt = stmt.order_by(KnowledgeDocumentModel.created_at.desc()).limit(max(k * 2, 8))
+            stmt = stmt.order_by(KnowledgeDocumentModel.created_at.desc()).limit(max(k * 3, 15))
             rows = (await session.execute(stmt)).scalars().all()
 
         # Rank by how many distinct keywords appear in the content.
@@ -117,7 +117,7 @@ async def _db_keyword_kb_context(query: str, tenant_id: str | None, k: int) -> l
                 continue
             lc = content.lower()
             score = sum(1 for w in keywords if w in lc) if keywords else 1
-            scored.append((score, f"[{doc.title}] {content[:600]}"))
+            scored.append((score, f"[{doc.title}] {content[:2000]}"))
         scored.sort(key=lambda t: t[0], reverse=True)
         return [s for _, s in scored[:k]]
     except Exception as exc:  # noqa: BLE001
@@ -125,7 +125,7 @@ async def _db_keyword_kb_context(query: str, tenant_id: str | None, k: int) -> l
         return []
 
 
-async def _retrieve_kb_context(query: str, tenant_id: str | None = None, *, k: int = 4) -> str:
+async def _retrieve_kb_context(query: str, tenant_id: str | None = None, *, k: int = 8) -> str:
     """Best-effort retrieval of relevant knowledge-base snippets.
 
     Tries semantic (vector) search first, then falls back to a Postgres
