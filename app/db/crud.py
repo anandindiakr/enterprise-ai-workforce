@@ -483,3 +483,65 @@ async def get_secret(db: AsyncSession, key: str) -> str | None:
 async def get_all_secrets(db: AsyncSession) -> dict[str, str]:
     result = await db.execute(select(PlatformSecretModel))
     return {row.key: row.value for row in result.scalars().all()}
+
+
+# ---------------------------------------------------------------------------
+# Company settings
+# ---------------------------------------------------------------------------
+
+async def get_company_settings(
+    db: AsyncSession,
+    tenant_id: str = "default",
+):
+    """Return the company_settings row, creating defaults on first call."""
+    from app.db.models import CompanySettingsModel
+    from app.core.config import settings as cfg
+
+    result = await db.execute(
+        select(CompanySettingsModel).where(CompanySettingsModel.tenant_id == tenant_id)
+    )
+    row = result.scalar_one_or_none()
+    if row is None:
+        row = CompanySettingsModel(
+            tenant_id=tenant_id,
+            company_name=cfg.company_name,
+            company_tagline=cfg.company_tagline,
+            company_website=cfg.company_website,
+            greeting_script=cfg.agent_greeting_script,
+            agent_overrides={},
+        )
+        db.add(row)
+        await db.flush()
+        await db.refresh(row)
+    return row
+
+
+async def upsert_company_settings(
+    db: AsyncSession,
+    *,
+    tenant_id: str = "default",
+    company_name: str | None = None,
+    company_tagline: str | None = None,
+    company_website: str | None = None,
+    greeting_script: str | None = None,
+    agent_overrides: dict | None = None,
+    updated_by: str | None = None,
+):
+    """Create-or-update company settings and invalidate the in-process cache."""
+    row = await get_company_settings(db, tenant_id)
+    if company_name    is not None: row.company_name    = company_name
+    if company_tagline is not None: row.company_tagline = company_tagline
+    if company_website is not None: row.company_website = company_website
+    if greeting_script is not None: row.greeting_script = greeting_script
+    if agent_overrides is not None: row.agent_overrides = agent_overrides
+    if updated_by      is not None: row.updated_by      = updated_by
+    row.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+    await db.refresh(row)
+    # Bust the in-process prompt cache.
+    try:
+        from app.core.company import invalidate_company_cache
+        invalidate_company_cache(tenant_id)
+    except Exception:
+        pass
+    return row

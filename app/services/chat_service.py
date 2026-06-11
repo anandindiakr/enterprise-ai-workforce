@@ -400,11 +400,12 @@ class ChatService:
             try:
                 from openai import AsyncOpenAI
 
-                from app.agents.prompts import render_system_prompt
+                from app.agents.prompts import build_system_prompt
 
                 profile = PROFILES_BY_DEPARTMENT.get(department)
                 system_prompt = (
-                    render_system_prompt(profile, first_turn=first_turn, voice=True)
+                    await build_system_prompt(profile, first_turn=first_turn, voice=True,
+                                              tenant_id=request.tenant_id or "default")
                     if profile else "You are a helpful AI assistant."
                 )
                 kb = await _retrieve_kb_context(request.message, request.tenant_id)
@@ -527,7 +528,7 @@ async def stream_chat_tokens(request: ChatRequest):
     try:
         from openai import AsyncOpenAI
         from app.agents.profiles import PROFILES_BY_DEPARTMENT
-        from app.agents.prompts import render_system_prompt
+        from app.agents.prompts import build_system_prompt
         from app.core.types import Department
 
         department = request.department or Department.RECEPTION
@@ -550,7 +551,9 @@ async def stream_chat_tokens(request: ChatRequest):
         first_turn = len(prior_history) == 0
 
         system_prompt = (
-            render_system_prompt(profile, first_turn=first_turn) if profile
+            await build_system_prompt(profile, first_turn=first_turn,
+                                      tenant_id=request.tenant_id or "default")
+            if profile
             else "You are a helpful AI assistant."
         )
 

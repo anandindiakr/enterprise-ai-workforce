@@ -168,6 +168,37 @@ class PlatformSecretModel(Base):
     )
 
 
+class CompanySettingsModel(Base):
+    """Per-tenant company branding and per-agent persona overrides.
+
+    Saved through the Settings → Company & Agents UI.  The agent prompt
+    renderer reads from this table (via an in-memory cache) so every chat
+    and voice turn reflects the operator's branding without restarting.
+    """
+
+    __tablename__ = "company_settings"
+
+    id: Mapped[uuid.UUID] = mapped_column(_UUID, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[str] = mapped_column(
+        String(64), default="default", nullable=False, unique=True, index=True
+    )
+    company_name: Mapped[str] = mapped_column(String(255), default="AlgoWorkforce", nullable=False)
+    company_tagline: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    company_website: Mapped[str] = mapped_column(String(500), default="", nullable=False)
+    # Greeting script template.  Supports {agent_name}, {company_name}, {department}.
+    greeting_script: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # Per-department overrides stored as JSON:
+    #   {"sales": {"display_name": "Alex", "script": "Hi, I'm Alex..."}, ...}
+    agent_overrides: Mapped[dict] = mapped_column(_JSONB, default=dict, nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+    updated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+
+
 class KnowledgeDocumentModel(Base):
     __tablename__ = "knowledge_documents"
 

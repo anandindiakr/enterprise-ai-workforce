@@ -6,6 +6,7 @@ import {
   User, Key, Bell, Shield, Database, Cpu,
   Save, Eye, EyeOff, CheckCircle, AlertCircle,
   ChevronRight, Zap, Trash2, RefreshCw, Globe,
+  Building2, ChevronDown, ChevronUp, Bot,
 } from "lucide-react";
 import { getUser, setToken, clearAuth, type AuthUser, authHeaders } from "@/lib/auth";
 
@@ -19,6 +20,7 @@ interface SettingsSection {
 }
 
 const SECTIONS: SettingsSection[] = [
+  { id: "company",        label: "Company & Agents", icon: Building2, description: "Brand identity and per-agent scripts" },
   { id: "profile",        label: "Profile",         icon: User,     description: "Your account details and preferences" },
   { id: "api_keys",       label: "API Keys",        icon: Key,      description: "Configure AI provider credentials" },
   { id: "notifications",  label: "Notifications",   icon: Bell,     description: "Alert and notification settings" },
@@ -83,6 +85,186 @@ function SecretField({ value, onChange, placeholder }: { value: string; onChange
       >
         {show ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
       </button>
+    </div>
+  );
+}
+
+/* ── CompanyPanel ────────────────────────────────────────── */
+
+const DEPARTMENTS = [
+  { key: "reception",     label: "Reception",     emoji: "👋" },
+  { key: "customer_care", label: "Customer Care", emoji: "💬" },
+  { key: "sales",         label: "Sales",         emoji: "💰" },
+  { key: "hr",            label: "HR",            emoji: "👥" },
+  { key: "finance",       label: "Finance",       emoji: "💵" },
+  { key: "technology",    label: "Technology",    emoji: "⚙️" },
+  { key: "marketing",     label: "Marketing",     emoji: "📢" },
+];
+
+interface AgentOverride { display_name: string; script: string; }
+
+function CompanyPanel({ apiBase }: { apiBase: string }) {
+  const [companyName, setCompanyName]       = useState("");
+  const [tagline, setTagline]               = useState("");
+  const [website, setWebsite]               = useState("");
+  const [greetingScript, setGreetingScript] = useState("");
+  const [overrides, setOverrides]           = useState<Record<string, AgentOverride>>({});
+  const [expanded, setExpanded]             = useState<string | null>(null);
+  const [saving, setSaving]                 = useState(false);
+  const [msg, setMsg]                       = useState<{ ok: boolean; text: string } | null>(null);
+
+  useEffect(() => {
+    fetch(`${apiBase}/settings/company`, { headers: authHeaders() })
+      .then((r) => r.json())
+      .then((d) => {
+        setCompanyName(d.company_name   ?? "");
+        setTagline(d.company_tagline    ?? "");
+        setWebsite(d.company_website    ?? "");
+        setGreetingScript(d.greeting_script ?? "");
+        setOverrides(d.agent_overrides  ?? {});
+      })
+      .catch(() => {});
+  }, [apiBase]);
+
+  const setOverride = (dept: string, field: keyof AgentOverride, val: string) => {
+    setOverrides((prev) => ({
+      ...prev,
+      [dept]: { ...(prev[dept] ?? { display_name: "", script: "" }), [field]: val },
+    }));
+  };
+
+  const handleSave = async () => {
+    setSaving(true); setMsg(null);
+    try {
+      const res = await fetch(`${apiBase}/settings/company`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          company_name:    companyName,
+          company_tagline: tagline,
+          company_website: website,
+          greeting_script: greetingScript,
+          agent_overrides: overrides,
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? "Save failed");
+      setMsg({ ok: true, text: `Saved — ${data.company_name}` });
+    } catch (e: unknown) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "Error" });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const inputCls = "w-full rounded-lg border border-[#1f2937] bg-[#070d1a] px-3 py-2 text-xs text-slate-300 placeholder-slate-600 focus:border-amber-500/50 focus:outline-none";
+  const textareaCls = `${inputCls} min-h-[80px] resize-y font-mono`;
+
+  return (
+    <div className="space-y-6">
+      {/* Company identity */}
+      <div className="rounded-xl border border-[#1f2937] bg-[#0c111d] p-5 space-y-4">
+        <h3 className="text-[11px] font-mono uppercase tracking-widest text-slate-600">Company Identity</h3>
+        <div className="space-y-3">
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Company Name</label>
+            <input value={companyName} onChange={(e) => setCompanyName(e.target.value)}
+              placeholder="AlgoWorkforce" className={inputCls} />
+            <p className="mt-1 text-[10px] text-slate-600">Agents will say this name when introducing themselves.</p>
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Tagline</label>
+            <input value={tagline} onChange={(e) => setTagline(e.target.value)}
+              placeholder="Your AI-Powered Enterprise Workforce" className={inputCls} />
+          </div>
+          <div>
+            <label className="mb-1 block text-xs font-medium text-slate-400">Website</label>
+            <input value={website} onChange={(e) => setWebsite(e.target.value)}
+              placeholder="https://www.algoworkforce.com" className={inputCls} />
+          </div>
+        </div>
+      </div>
+
+      {/* Global greeting script */}
+      <div className="rounded-xl border border-[#1f2937] bg-[#0c111d] p-5 space-y-3">
+        <h3 className="text-[11px] font-mono uppercase tracking-widest text-slate-600">Global Greeting Script</h3>
+        <textarea value={greetingScript} onChange={(e) => setGreetingScript(e.target.value)}
+          placeholder={"Hello! This is {agent_name} from {company_name}. How may I help you today?"}
+          className={textareaCls} />
+        <p className="text-[10px] text-slate-600">
+          Placeholders: <code className="text-amber-500/80">{"{agent_name}"}</code>,{" "}
+          <code className="text-amber-500/80">{"{company_name}"}</code>,{" "}
+          <code className="text-amber-500/80">{"{department}"}</code>.
+          Leave blank to use the default per-agent greeting. Per-department scripts below override this.
+        </p>
+      </div>
+
+      {/* Per-department agent customisation */}
+      <div className="rounded-xl border border-[#1f2937] bg-[#0c111d] p-5 space-y-2">
+        <h3 className="text-[11px] font-mono uppercase tracking-widest text-slate-600 mb-3">Per-Department Agent Scripts</h3>
+        {DEPARTMENTS.map(({ key, label, emoji }) => {
+          const open = expanded === key;
+          const ov   = overrides[key] ?? { display_name: "", script: "" };
+          return (
+            <div key={key} className="rounded-lg border border-[#1f2937] overflow-hidden">
+              <button
+                onClick={() => setExpanded(open ? null : key)}
+                className="flex w-full items-center justify-between px-4 py-3 text-left text-xs text-slate-300 hover:bg-[#111827] transition-colors"
+              >
+                <span className="flex items-center gap-2">
+                  <span>{emoji}</span>
+                  <span className="font-medium">{label}</span>
+                  {ov.display_name && (
+                    <span className="rounded-full bg-amber-500/10 border border-amber-500/20 px-2 py-0.5 text-[10px] text-amber-400">
+                      {ov.display_name}
+                    </span>
+                  )}
+                </span>
+                {open ? <ChevronUp className="h-3.5 w-3.5 text-slate-500" /> : <ChevronDown className="h-3.5 w-3.5 text-slate-500" />}
+              </button>
+              {open && (
+                <div className="border-t border-[#1f2937] px-4 pb-4 pt-3 space-y-3 bg-[#070d1a]">
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-slate-500">Agent Display Name</label>
+                    <input value={ov.display_name} onChange={(e) => setOverride(key, "display_name", e.target.value)}
+                      placeholder={`e.g. "Alex" or "Sam"`} className={inputCls} />
+                    <p className="mt-1 text-[10px] text-slate-600">Overrides the default name for this department only.</p>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-slate-500">Custom Greeting / Script</label>
+                    <textarea value={ov.script} onChange={(e) => setOverride(key, "script", e.target.value)}
+                      placeholder={`Hi, I'm {agent_name} from ${label}. How can I help?`}
+                      className={textareaCls} />
+                    <p className="mt-1 text-[10px] text-slate-600">
+                      This overrides the global greeting for the <strong className="text-slate-400">{label}</strong> department.
+                      Use <code className="text-amber-500/80">{"{agent_name}"}</code> and{" "}
+                      <code className="text-amber-500/80">{"{company_name}"}</code> as placeholders.
+                    </p>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Save button */}
+      <div className="flex items-center justify-between pt-2">
+        {msg && (
+          <span className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs ${
+            msg.ok ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-400" : "border-red-500/25 bg-red-500/10 text-red-400"
+          }`}>
+            {msg.ok ? <CheckCircle className="h-3 w-3" /> : <AlertCircle className="h-3 w-3" />}
+            {msg.text}
+          </span>
+        )}
+        <button onClick={handleSave} disabled={saving}
+          className="ml-auto flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-1.5 text-xs font-semibold text-black transition-all hover:bg-amber-400 disabled:opacity-60"
+        >
+          {saving ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+          Save Company Settings
+        </button>
+      </div>
     </div>
   );
 }
@@ -207,7 +389,7 @@ function IntegrationsPanel({ apiBase }: { apiBase: string }) {
 
 export default function SettingsPage() {
   const router = useRouter();
-  const [activeSection, setActiveSection] = useState("profile");
+  const [activeSection, setActiveSection] = useState("company");
   const [user, setUser] = useState<AuthUser | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -361,6 +543,8 @@ export default function SettingsPage() {
   }
 
   const sectionContent: Record<string, React.ReactNode> = {
+    company: <CompanyPanel apiBase={apiBase} />,
+
     profile: (
       <div className="space-y-6">
         <FieldGroup label="Account Information">

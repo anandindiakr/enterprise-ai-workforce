@@ -173,3 +173,72 @@ async def save_integrations(
             os.environ[env_key] = v
         saved.append(k)
     return {"saved": saved, "count": len(saved)}
+
+
+# ---------------------------------------------------------------------------
+# Company & Agent configuration
+# ---------------------------------------------------------------------------
+
+from app.db.crud import get_company_settings, upsert_company_settings  # noqa: E402
+
+
+class AgentOverride(BaseModel):
+    display_name: str = ""
+    script: str = ""
+
+
+class CompanySettingsBody(BaseModel):
+    company_name: str = ""
+    company_tagline: str = ""
+    company_website: str = ""
+    # Global greeting script template.
+    # Placeholders: {agent_name}, {company_name}, {department}
+    greeting_script: str = ""
+    # Per-department overrides keyed by department slug
+    # e.g. {"sales": {"display_name": "Alex", "script": "Hello, I'm Alex..."}}
+    agent_overrides: dict[str, AgentOverride] = {}
+
+
+@router.get("/company")
+async def get_company_config(
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(get_principal),
+):
+    """Return the current company branding & agent persona configuration."""
+    row = await get_company_settings(db, tenant_id=principal.tenant_id or "default")
+    await db.commit()
+    return {
+        "company_name": row.company_name,
+        "company_tagline": row.company_tagline,
+        "company_website": row.company_website,
+        "greeting_script": row.greeting_script,
+        "agent_overrides": row.agent_overrides,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+        "updated_by": row.updated_by,
+    }
+
+
+@router.put("/company")
+async def update_company_config(
+    body: CompanySettingsBody,
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_admin),
+):
+    """Update company branding and per-agent persona scripts (admin only)."""
+    overrides_dict = {k: v.model_dump() for k, v in body.agent_overrides.items()}
+    row = await upsert_company_settings(
+        db,
+        tenant_id=principal.tenant_id or "default",
+        company_name=body.company_name or None,
+        company_tagline=body.company_tagline if body.company_tagline is not None else None,
+        company_website=body.company_website if body.company_website is not None else None,
+        greeting_script=body.greeting_script if body.greeting_script is not None else None,
+        agent_overrides=overrides_dict if overrides_dict is not None else None,
+        updated_by=principal.user_id,
+    )
+    await db.commit()
+    return {
+        "saved": True,
+        "company_name": row.company_name,
+        "updated_at": row.updated_at.isoformat() if row.updated_at else None,
+    }

@@ -33,8 +33,7 @@ _BASE_TEMPLATE = """You are **{display_name}**, a {role} at **{company_name}**.
 """
 
 
-# Routing/escalation guidance for *text chat*: the LLM may emit JSON directives
-# which the chat service parses and strips before display.
+# Routing/escalation guidance for *text chat*
 _CHAT_PRINCIPLES = """4. Detect intent quickly. If the request belongs to another department, hand off
    by replying with a JSON line like ``{{"transfer": "<department>", "reason": "..."}}``.
 5. Detect frustration, urgency, or explicit requests for a human and escalate
@@ -42,10 +41,7 @@ _CHAT_PRINCIPLES = """4. Detect intent quickly. If the request belongs to anothe
 6. Keep replies focused; use light markdown only when it genuinely helps."""
 
 
-# Guidance for *live voice* calls. Critically, the agent must NEVER output JSON
-# or control directives — those would be read aloud verbatim by TTS. Explicit
-# department transfers are detected deterministically by the system BEFORE this
-# agent is ever invoked, so the agent's only job here is to converse naturally.
+# Guidance for *live voice* calls — agent must NEVER output JSON (it would be read aloud).
 _VOICE_PRINCIPLES = """4. You are on a LIVE VOICE call. Just answer the caller directly and naturally.
    You ARE the {department} agent — if the caller asks who they are speaking with,
    tell them your name ({display_name}) and that you are from the {department} team at {company_name}.
@@ -55,39 +51,71 @@ _VOICE_PRINCIPLES = """4. You are on a LIVE VOICE call. Just answer the caller d
 6. Speak in 1-3 short sentences, no markdown, natural conversational prosody."""
 
 
-def render_system_prompt(
-    profile: AgentProfile, *, first_turn: bool = True, voice: bool = False
+async def build_system_prompt(
+    profile: AgentProfile,
+    *,
+    first_turn: bool = True,
+    voice: bool = False,
+    tenant_id: str = "default",
 ) -> str:
-    """Render the system prompt for the given :class:`AgentProfile`.
+    """Async entry-point: loads company branding from DB cache then renders the prompt.
 
-    ``first_turn`` controls the self-introduction behaviour. On the first turn
-    of a conversation the agent introduces itself by name; on every subsequent
-    turn it is explicitly instructed NOT to greet or re-introduce itself.
-
-    ``voice`` selects the live-call principles: in voice mode the agent is told
-    to answer conversationally and to NEVER emit JSON/control directives (which
-    would otherwise be read aloud by TTS).
+    Use this from async contexts (chat service, voice session).  It reads the
+    operator's company name, tagline, greeting script and per-department
+    persona overrides from the database so changes made in the Settings UI
+    are reflected on the very next conversation turn.
     """
+    from app.core.company import get_company_branding
+
+    branding = await get_company_branding(tenant_id)
+    dept_key = profile.department.value
+    overrides = (branding.agent_overrides or {}).get(dept_key) or {}
+    display_name_override = overrides.get("display_name") or None
+    custom_dept_script = (overrides.get("script") or "").strip()
+
+    return render_system_prompt(
+        profile,
+        first_turn=first_turn,
+        voice=voice,
+        company_name=branding.company_name,
+        company_tagline=branding.company_tagline,
+        greeting_script=custom_dept_script or branding.greeting_script,
+        display_name_override=display_name_override,
+    )
+
+
+def render_system_prompt(
+    profile: AgentProfile,
+    *,
+    first_turn: bool = True,
+    voice: bool = False,
+    company_name: str | None = None,
+    company_tagline: str | None = None,
+    greeting_script: str | None = None,
+    display_name_override: str | None = None,
+) -> str:
+    """Synchronous render — prefer :func:`build_system_prompt` from async callers."""
     from app.core.config import settings
 
-    company_name = settings.company_name or "AlgoWorkforce"
-    company_tagline = settings.company_tagline or "Your AI-Powered Enterprise Workforce"
+    company_name = company_name or settings.company_name or "AlgoWorkforce"
+    company_tagline = company_tagline or settings.company_tagline or "Your AI-Powered Enterprise Workforce"
     capabilities = "\n".join(f"- {c}" for c in profile.capabilities) or "- (general)"
     mcp = ", ".join(profile.mcp_connectors) or "(none)"
     languages = ", ".join(profile.languages)
-    display_name = profile.display_name or profile.agent_name
+    display_name = display_name_override or profile.display_name or profile.agent_name
 
-    # Build the first-turn greeting.  If the operator has set a custom
-    # greeting script (AGENT_GREETING_SCRIPT in .env), use that; otherwise
-    # fall back to a natural default that names both the agent and company.
-    custom_script = (settings.agent_greeting_script or "").strip()
+    custom_script = (greeting_script or settings.agent_greeting_script or "").strip()
+
     if first_turn:
         if custom_script:
-            greeting_example = custom_script.format(
-                agent_name=display_name,
-                company_name=company_name,
-                department=profile.department.value,
-            )
+            try:
+                greeting_example = custom_script.format(
+                    agent_name=display_name,
+                    company_name=company_name,
+                    department=profile.department.value,
+                )
+            except KeyError:
+                greeting_example = custom_script
         else:
             greeting_example = (
                 f"Hi, I'm {display_name} from {company_name}'s "
@@ -106,6 +134,7 @@ def render_system_prompt(
             "   Skip pleasantries and respond directly to the user's latest message.\n"
             f'   Never call yourself "{profile.agent_name}" to the user.'
         )
+
     routing_principles = (
         _VOICE_PRINCIPLES if voice else _CHAT_PRINCIPLES
     ).format(
