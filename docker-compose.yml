@@ -97,9 +97,10 @@ services:
     ports:
       - "8001:8000"
     volumes:
-      - chroma_data:/data
+      - chroma_data:/chroma/chroma
     environment:
       - IS_PERSISTENT=TRUE
+      - CHROMA_SERVER_PERSIST_PATH=/chroma/chroma
       - ANONYMIZED_TELEMETRY=FALSE
     restart: unless-stopped
 
