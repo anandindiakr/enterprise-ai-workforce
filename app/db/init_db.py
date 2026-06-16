@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from loguru import logger
 
+from app.core.config import settings
 from app.db.models import Base
 from app.db.session import AsyncSessionLocal, engine
 from app.db.crud import (
@@ -13,16 +14,17 @@ from app.db.crud import (
 
 
 async def init_db() -> None:
-    """Create all tables and seed default users on first start.
+    """Create all tables and seed built-in accounts on first start.
 
-    The two built-in demo accounts (``admin`` / ``agent``) have their
-    credentials **reset deterministically on every startup** so the documented
-    logins always work, even if an earlier build seeded them with a different
-    password. This is intentional for the demo/default tenant.
+    Credentials are read from environment variables (ADMIN_PASSWORD,
+    AGENT_PASSWORD) set in the server's .env file — they are never
+    hardcoded here or shown on any public-facing page.
 
-    Documented credentials (shown on the login screen):
-      admin / admin123   (full access)
-      agent / agent123   (agent access)
+    Behaviour:
+    - If the account does NOT exist → create it with the env password.
+    - If the account already exists → leave the password untouched so
+      that admin-initiated password changes survive a container restart.
+    - Roles and scopes are always kept up to date.
     """
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
@@ -36,46 +38,46 @@ async def init_db() -> None:
     await _migrate_user_array_columns_to_json()
 
     async with AsyncSessionLocal() as db:
-        # ── Admin: admin / admin123 ─────────────────────────────────────────
+        # ── Admin account ──────────────────────────────────────────────────
         admin = await get_user_by_username(db, "admin")
         if admin is None:
             await create_user(
                 db,
                 username="admin",
                 email="admin@workforce.local",
-                password="admin123",
+                password=settings.admin_password,
                 full_name="Platform Admin",
                 roles=["admin", "agent"],
                 scopes=["chat", "voice", "workflows", "audit"],
                 is_superuser=True,
             )
-            logger.info("Seeded default admin user (admin/admin123).")
+            logger.info("Seeded admin user from ADMIN_PASSWORD env var.")
         else:
-            # Force-reset to the documented credentials + privileges.
-            admin.hashed_password = hash_password("admin123")
+            # Keep roles / scopes current; leave password unchanged so that
+            # any password change made in production survives a restart.
             admin.roles = ["admin", "agent"]
             admin.scopes = ["chat", "voice", "workflows", "audit"]
             admin.is_superuser = True
             admin.is_active = True
-            logger.info("Reset default admin user credentials (admin/admin123).")
+            logger.info("Admin account verified (password unchanged).")
 
-        # ── Demo agent: agent / agent123 ────────────────────────────────────
+        # ── Agent account ──────────────────────────────────────────────────
         agent = await get_user_by_username(db, "agent")
         if agent is None:
             await create_user(
                 db,
                 username="agent",
                 email="agent@workforce.local",
-                password="agent123",
-                full_name="Demo Agent",
+                password=settings.agent_password,
+                full_name="Platform Agent",
                 roles=["agent"],
                 scopes=["chat", "voice"],
             )
-            logger.info("Seeded default agent user (agent/agent123).")
+            logger.info("Seeded agent user from AGENT_PASSWORD env var.")
         else:
-            agent.hashed_password = hash_password("agent123")
+            agent.roles = ["agent"]
             agent.is_active = True
-            logger.info("Reset default agent user credentials (agent/agent123).")
+            logger.info("Agent account verified (password unchanged).")
 
         await db.commit()
 

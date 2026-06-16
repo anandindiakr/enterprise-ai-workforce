@@ -8,7 +8,7 @@ import { Zap, Eye, EyeOff, Loader2 } from "lucide-react";
 
 export default function LoginPage() {
   const router = useRouter();
-  const [username, setUsername] = useState("admin");
+  const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw]     = useState(false);
   const [error, setError]       = useState("");
@@ -145,20 +145,7 @@ export default function LoginPage() {
             </div>
           </form>
 
-          {/* Demo hint */}
-          <div className="mt-5 rounded-lg border border-[#1f2937] bg-[#070d1a] px-3 py-2.5">
-            <p className="font-mono text-[10px] uppercase tracking-wider text-slate-600 mb-1.5">Demo accounts</p>
-            <div className="space-y-1">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-400"><span className="text-amber-400 font-mono">admin</span> / admin123</span>
-                <span className="rounded-full bg-amber-500/10 px-2 py-0.5 text-[10px] text-amber-400 font-mono">Full access</span>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-slate-400"><span className="text-cyan-400 font-mono">agent</span> / agent123</span>
-                <span className="rounded-full bg-cyan-500/10 px-2 py-0.5 text-[10px] text-cyan-400 font-mono">Agent access</span>
-              </div>
-            </div>
-          </div>
+
         </div>
       </div>
     </div>

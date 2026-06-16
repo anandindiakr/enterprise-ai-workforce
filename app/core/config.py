@@ -32,6 +32,11 @@ class AppSettings(BaseSettings):
     app_log_level: str = "INFO"
     app_debug: bool = False
 
+    # --- Seed credentials (read from .env — never commit real values) ---
+    # Set ADMIN_PASSWORD and AGENT_PASSWORD in your .env file.
+    admin_password: str = "change-me-in-env"
+    agent_password: str = "change-me-agent"
+
     # --- Company branding (used by agent personas) ---
     # Set these in .env so every agent speaks on behalf of your organisation.
     company_name: str = "AlgoWorkforce"
