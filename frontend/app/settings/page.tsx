@@ -543,7 +543,7 @@ export default function SettingsPage() {
   }
 
   const sectionContent: Record<string, React.ReactNode> = {
-    company: <CompanyPanel apiBase={apiBase} />,
+    company: <CompanyPanel apiBase={process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080"} />,
 
     profile: (
       <div className="space-y-6">
