@@ -141,7 +141,9 @@ def _bootstrap(reg: MCPRegistry) -> None:
         EmailConnector(_resolve_url(settings.mcp_email_url, "email"), settings.mcp_email_token),
         Department.MARKETING,
     )
-    reg.register(
-        AnalyticsConnector(_resolve_url(settings.mcp_analytics_url, "analytics"), settings.mcp_analytics_token),
-        Department.MARKETING,
+    _analytics = AnalyticsConnector(
+        _resolve_url(settings.mcp_analytics_url, "analytics"),
+        settings.mcp_analytics_token,
     )
+    reg.register(_analytics, Department.MARKETING)
+    reg.register(_analytics, Department.FINANCE)

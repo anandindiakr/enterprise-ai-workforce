@@ -37,6 +37,7 @@ from app.mcp.mock_devops_server import router as devops_mcp_router
 from app.mcp.mock_knowledge_server import router as knowledge_mcp_router
 from app.mcp.mock_calendar_server import router as calendar_mcp_router
 from app.mcp.mock_email_server import router as email_mcp_router
+from app.mcp.mock_analytics_server import router as analytics_mcp_router
 from app.memory.long_term import long_term_memory
 from app.memory.short_term import short_term_memory
 from app.telemetry.tracing import init_tracing
@@ -184,6 +185,7 @@ def create_app() -> FastAPI:
     app.include_router(knowledge_mcp_router)
     app.include_router(calendar_mcp_router)
     app.include_router(email_mcp_router)
+    app.include_router(analytics_mcp_router)
 
     @app.get("/")
     async def root() -> dict:
