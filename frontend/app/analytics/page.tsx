@@ -72,6 +72,17 @@ interface HRSummary {
   total_employees: number;
 }
 
+interface AgentStat {
+  department: string;
+  messages: number;
+  sessions: number;
+}
+
+interface AgentActivity {
+  days: number;
+  agents: AgentStat[];
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async function mcpCall(endpoint: string, method: string, args = {}) {
@@ -147,6 +158,7 @@ export default function AnalyticsPage() {
   const [budget,      setBudget]      = useState<BudgetSummary     | null>(null);
   const [health,      setHealth]      = useState<SystemHealth      | null>(null);
   const [hr,          setHr]          = useState<HRSummary         | null>(null);
+  const [agentStats,  setAgentStats]  = useState<AgentActivity     | null>(null);
   const [loading,     setLoading]     = useState(true);
   const [lastRefresh, setLastRefresh] = useState<Date | null>(null);
 
@@ -155,6 +167,10 @@ export default function AnalyticsPage() {
     try {
       const pRes = await fetch(`${API}/api/v1/analytics`, { headers: authHeaders() });
       if (pRes.ok) setPlatform(await pRes.json());
+
+      // Agent activity — always available (no MCP required)
+      const aRes = await fetch(`${API}/api/v1/analytics/agents?days=30`, { headers: authHeaders() });
+      if (aRes.ok) setAgentStats(await aRes.json());
 
       await Promise.allSettled([
         mcpCall("crm",     "crm_pipeline_summary",  {}).then((d) => d && setPipeline(d)),
@@ -184,7 +200,7 @@ export default function AnalyticsPage() {
       ["Messages Today",        platform?.chat?.messages_today        ?? ""],
       ["Total Tokens Used",     platform?.chat?.total_tokens_used     ?? ""],
       ["Open Escalations",      platform?.escalations?.open           ?? ""],
-      ["Knowledge Documents",   platform?.knowledge_base.total_documents ?? ""],
+      ["Knowledge Documents",   platform?.knowledge_base?.total_documents ?? ""],
       ["Active Voice Sessions", platform?.voice?.active_sessions      ?? ""],
       ["Pipeline Value",        pipeline?.total_pipeline_value       ?? ""],
       ["Open Deals",            pipeline?.open_deals                 ?? ""],
@@ -240,7 +256,7 @@ export default function AnalyticsPage() {
                 <StatCard icon={MessageSquare} label="Total Messages"  value={num(platform?.chat?.total_messages ?? 0)}          sub={`${platform?.chat?.messages_today ?? 0} today`}                    color="text-amber-400"   bg="bg-amber-500/10"  />
                 <StatCard icon={Activity}      label="Chat Sessions"   value={num(platform?.chat?.total_sessions ?? 0)}          sub={`${platform?.chat?.active_sessions ?? 0} active`}                  color="text-cyan-400"    bg="bg-cyan-500/10"   />
                 <StatCard icon={AlertTriangle} label="Escalations"     value={String(platform?.escalations?.open ?? 0)}         sub={`${platform?.escalations?.total ?? 0} total`}                      color="text-red-400"     bg="bg-red-500/10"    />
-                <StatCard icon={BookOpen}      label="Knowledge Docs"  value={String(platform?.knowledge_base.total_documents ?? 0)} sub={`${platform?.audit.events_today ?? 0} audit events today`} color="text-violet-400"  bg="bg-violet-500/10" />
+                <StatCard icon={BookOpen}      label="Knowledge Docs"  value={String(platform?.knowledge_base?.total_documents ?? 0)} sub={`${platform?.audit?.events_today ?? 0} audit events today`} color="text-violet-400"  bg="bg-violet-500/10" />
               </div>
             </div>
 
@@ -261,18 +277,46 @@ export default function AnalyticsPage() {
                 )}
               </div>
 
-              {/* Daily messages — last 7 days */}
+              {/* Daily messages — last 30 days */}
               <div className="rounded-xl border border-[#1f2937] bg-[#070d1a] p-5">
                 <h3 className="mb-4 flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-widest text-slate-400">
-                  <TrendingUp className="h-3.5 w-3.5 text-emerald-400" /> Daily Messages (7 days)
+                  <TrendingUp className="h-3.5 w-3.5 text-emerald-400" /> Daily Messages (30 days)
                 </h3>
                 {(platform?.activity?.daily_messages.length ?? 0) === 0 ? (
                   <p className="text-xs text-slate-600">No message data yet.</p>
                 ) : (
-                  <div className="space-y-3">
+                  <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
                     {(platform?.activity?.daily_messages ?? []).map((d) => (
                       <BarRow key={d.date} label={d.date.slice(5)} value={d.messages} max={maxDaily} color="bg-emerald-500" />
                     ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Agent Activity — 30-day per-department breakdown */}
+              <div className="rounded-xl border border-[#1f2937] bg-[#070d1a] p-5">
+                <h3 className="mb-4 flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-widest text-slate-400">
+                  <Users className="h-3.5 w-3.5 text-cyan-400" /> Agent Activity (30 days)
+                </h3>
+                {(agentStats?.agents?.length ?? 0) === 0 ? (
+                  <p className="text-xs text-slate-600">No agent conversations yet — start a chat to see data.</p>
+                ) : (
+                  <div className="space-y-3">
+                    {(agentStats?.agents ?? []).map((a) => {
+                      const maxMsgs = Math.max(...(agentStats?.agents ?? []).map(x => x.messages), 1);
+                      return (
+                        <div key={a.department} className="space-y-1">
+                          <div className="flex items-center justify-between text-xs text-slate-400">
+                            <span className="capitalize font-medium">{a.department.replace(/_/g, " ")}</span>
+                            <span className="text-slate-500">{a.sessions} session{a.sessions !== 1 ? "s" : ""} · {a.messages} msg{a.messages !== 1 ? "s" : ""}</span>
+                          </div>
+                          <div className="h-1.5 rounded-full bg-[#1f2937]">
+                            <div className="h-1.5 rounded-full bg-cyan-500 transition-all duration-700"
+                                 style={{ width: `${Math.max(4, Math.round((a.messages / maxMsgs) * 100))}%` }} />
+                          </div>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
@@ -287,7 +331,7 @@ export default function AnalyticsPage() {
                     { label: "Total Tokens",   value: num(platform?.chat?.total_tokens_used ?? 0),    icon: Zap,           color: "text-amber-400"   },
                     { label: "Msgs This Week", value: num(platform?.chat?.messages_this_week ?? 0),   icon: MessageSquare, color: "text-cyan-400"    },
                     { label: "Voice Sessions", value: String(platform?.voice?.active_sessions ?? 0),  icon: Mic,           color: "text-violet-400"  },
-                    { label: "Audit Events",   value: String(platform?.audit.events_today ?? 0),     icon: Clock,         color: "text-slate-400"   },
+                    { label: "Audit Events",   value: String(platform?.audit?.events_today ?? 0),     icon: Clock,         color: "text-slate-400"   },
                   ] as const).map(({ label, value, icon: Icon, color }) => (
                     <div key={label} className="rounded-lg bg-[#111827] p-3">
                       <div className="flex items-center gap-2">

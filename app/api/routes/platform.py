@@ -5,7 +5,7 @@ from __future__ import annotations
 import time
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from fastapi.responses import Response
 from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from sqlalchemy import func, select
@@ -465,12 +465,13 @@ async def platform_analytics(
     # ── Voice sessions (in-memory) ─────────────────────────────────
     active_voice = len(voice_session_manager().all())
 
-    # ── Daily activity (last 7 days, message count per day) ────────
+    # ── Daily activity (last 30 days, message count per day) ────────
     # Bucket in Python so this works on both SQLite (local/dev) and Postgres
     # (prod) — ``date_trunc`` is Postgres-only and crashes on SQLite.
+    month_ago = now - timedelta(days=30)
     ts_rows = (
         await db.execute(
-            select(ChatMessageModel.created_at).where(ChatMessageModel.created_at >= week_ago)
+            select(ChatMessageModel.created_at).where(ChatMessageModel.created_at >= month_ago)
         )
     ).all()
     _buckets: dict[str, int] = {}
@@ -544,6 +545,53 @@ async def list_mcp_tools(
         {"name": t.name, "connector": connector, "tool": t.name, "description": t.description}
         for connector, t in mcp_registry().list_tools(department)
     ]
+
+
+
+# ── Agent activity stats ────────────────────────────────────────────────────
+
+@router.get("/analytics/agents")
+async def agent_activity(
+    days: int = Query(default=30, ge=1, le=90),
+    db: AsyncSession = Depends(get_db),
+    _: Principal = Depends(get_principal),
+) -> dict:
+    """Per-department message/session counts for the last N days."""
+    cutoff = datetime.utcnow() - timedelta(days=days)
+
+    # Messages per department
+    dept_msg_rows = (
+        await db.execute(
+            select(ChatMessageModel.department, func.count().label("cnt"))
+            .where(ChatMessageModel.created_at >= cutoff)
+            .group_by(ChatMessageModel.department)
+        )
+    ).all()
+
+    # Sessions per department
+    dept_sess_rows = (
+        await db.execute(
+            select(ChatSessionModel.department, func.count().label("cnt"))
+            .where(ChatSessionModel.created_at >= cutoff)
+            .group_by(ChatSessionModel.department)
+        )
+    ).all()
+
+    msgs_map  = {str(r.department or "general"): r.cnt for r in dept_msg_rows}
+    sess_map  = {str(r.department or "general"): r.cnt for r in dept_sess_rows}
+    all_depts = sorted(set(msgs_map) | set(sess_map))
+
+    return {
+        "days": days,
+        "agents": [
+            {
+                "department": dept,
+                "messages":   msgs_map.get(dept, 0),
+                "sessions":   sess_map.get(dept, 0),
+            }
+            for dept in all_depts
+        ],
+    }
 
 
 # ── Prometheus ─────────────────────────────────────────────────────────────────
