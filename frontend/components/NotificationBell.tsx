@@ -34,14 +34,21 @@ export function NotificationBell() {
 
       ws.onmessage = (e) => {
         try {
-          const data = JSON.parse(e.data);
-          if (data.type === "new_escalation" || data.type === "escalation") {
+          const msg = JSON.parse(e.data);
+          // events_ws.py wraps every event as {"channel":"escalations","data":{...}}
+          // Unwrap the envelope; fall back to raw format for forward-compat.
+          const payload: Record<string, unknown> =
+            (msg.channel && msg.data) ? msg.data : msg;
+
+          if (payload?.type === "new_escalation" || payload?.type === "escalation") {
             setNotes((prev) => [
               {
-                id: data.id ?? String(Date.now()),
-                department: data.department ?? "Unknown",
-                message: data.message ?? "New escalation received",
-                timestamp: data.timestamp ?? new Date().toISOString(),
+                id: String(payload.id ?? Date.now()),
+                department: String(payload.department ?? "Unknown"),
+                // backend field is "reason", not "message"
+                message: String(payload.reason ?? payload.message ?? "New escalation received"),
+                // backend field is "created_at", not "timestamp"
+                timestamp: String(payload.created_at ?? payload.timestamp ?? new Date().toISOString()),
               },
               ...prev.slice(0, 19),
             ]);
