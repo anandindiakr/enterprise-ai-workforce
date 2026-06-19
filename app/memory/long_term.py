@@ -36,11 +36,20 @@ from app.core.logging import logger
 # ---------------------------------------------------------------------------
 
 class _OpenAIEmbeddingFunction:
-    """Thin wrapper that satisfies ChromaDB's EmbeddingFunction protocol."""
+    """Thin wrapper that satisfies ChromaDB's EmbeddingFunction protocol.
+
+    ChromaDB >= 0.6 requires embedding functions to expose a ``name()`` method
+    so it can validate the function matches what was used when the collection
+    was first created.
+    """
 
     def __init__(self, api_key: str, model: str = "text-embedding-3-small") -> None:
         self._api_key = api_key
         self._model = model
+
+    def name(self) -> str:
+        """Required by ChromaDB >= 0.6 to identify the embedding function type."""
+        return f"openai_{self._model.replace('-', '_')}"
 
     def __call__(self, input: list[str]) -> list[list[float]]:  # noqa: A002
         from openai import OpenAI  # imported lazily so startup is fast
@@ -138,11 +147,15 @@ class LongTermMemory:
         try:
             return self._client.get_or_create_collection(**kwargs)
         except Exception as exc:
-            # If collection exists with a different embedding dimension
-            # (e.g. switching from sentence-transformers 384d to OpenAI 1536d)
-            # we must delete and recreate it.
+            # If collection exists with a different embedding dimension or
+            # function name (ChromaDB >= 0.6 validates embedding function name)
+            # delete and recreate it.
             msg = str(exc).lower()
-            if "dimension" in msg or "embedding" in msg or "mismatch" in msg:
+            if (
+                "dimension" in msg or "embedding" in msg or "mismatch" in msg
+                or "conflict" in msg or "does not match" in msg
+                or isinstance(exc, (ValueError, AttributeError))
+            ):
                 logger.warning(
                     "LongTermMemory: embedding dimension mismatch — "
                     "deleting and recreating collection '{}'. "

@@ -322,6 +322,19 @@ async def _process_utterance(
         "technology": "Technology", "marketing": "Marketing",
     }
 
+    # Fixed intros per department — spoken immediately after transfer so the
+    # user always hears the new agent speak even if the LLM followup is slow
+    # or gets partially stripped by _strip_control_signals.
+    _DEPT_INTROS = {
+        "reception":     "Hello! I'm your Receptionist. How can I help direct you?",
+        "customer_care": "Hi there! I'm from Customer Care. I'm here to resolve your issue.",
+        "sales":         "Hi! I'm your Sales agent. I can help with pricing, products, and purchases.",
+        "hr":            "Hello! I'm the HR agent. I can assist with employment and HR queries.",
+        "finance":       "Hi, this is Finance. I can help with billing, invoices, and payments.",
+        "technology":    "Hello! This is Tech Support. I'm here to help with your technical issue.",
+        "marketing":     "Hi! I'm the Marketing agent. I can help with campaigns and branding.",
+    }
+
     try:
         chat_resp = await chat_service().handle(
             ChatRequest(
@@ -349,8 +362,12 @@ async def _process_utterance(
             # 1) Spoken handoff from the current agent.
             await _emit(f"I'm connecting you to our {label} team now. One moment please.", dept, strip=False)
 
-            # 2) New department picks up the SAME request and responds out loud,
-            #    carrying the conversation context (same session_id).
+            # 2) Guaranteed intro from the new department (always spoken,
+            #    no LLM involved — avoids silence if followup is slow/stripped).
+            intro = _DEPT_INTROS.get(dept_name, f"Hi, this is {label}. How can I help you?")
+            await _emit(intro, dept_name, strip=False)
+
+            # 3) Also let the new department answer the actual question.
             try:
                 followup = await chat_service().handle(
                     ChatRequest(
@@ -361,12 +378,11 @@ async def _process_utterance(
                         tenant_id=tenant_id,
                     )
                 )
-                new_reply = followup.message.content or ""
+                new_reply = _strip_control_signals(followup.message.content or "").strip()
             except Exception:  # noqa: BLE001
                 new_reply = ""
-            if not new_reply.strip():
-                new_reply = f"Hi, this is {label}. How can I help you?"
-            await _emit(new_reply, dept_name)
+            if new_reply:
+                await _emit(new_reply, dept_name)
             return
 
         await _emit(reply_text, dept)
