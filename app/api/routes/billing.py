@@ -20,7 +20,7 @@ from pydantic import BaseModel
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.api.deps import require_roles
+from app.security.auth import require_roles
 from app.services import billing_service as svc
 
 router = APIRouter(prefix="/billing", tags=["billing"])
