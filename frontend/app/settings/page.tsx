@@ -7,6 +7,7 @@ import {
   Save, Eye, EyeOff, CheckCircle, AlertCircle,
   ChevronRight, Zap, Trash2, RefreshCw, Globe,
   Building2, ChevronDown, ChevronUp, Bot,
+  Users, UserPlus, UserX, ToggleLeft, ToggleRight,
 } from "lucide-react";
 import { getUser, setToken, clearAuth, type AuthUser, authHeaders } from "@/lib/auth";
 
@@ -21,6 +22,7 @@ interface SettingsSection {
 
 const SECTIONS: SettingsSection[] = [
   { id: "company",        label: "Company & Agents", icon: Building2, description: "Brand identity and per-agent scripts" },
+  { id: "users",          label: "User Management", icon: Users,    description: "Add and manage platform users (Admin only)" },
   { id: "profile",        label: "Profile",         icon: User,     description: "Your account details and preferences" },
   { id: "api_keys",       label: "API Keys",        icon: Key,      description: "Configure AI provider credentials" },
   { id: "notifications",  label: "Notifications",   icon: Bell,     description: "Alert and notification settings" },
@@ -264,6 +266,223 @@ function CompanyPanel({ apiBase }: { apiBase: string }) {
           {saving ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
           Save Company Settings
         </button>
+      </div>
+    </div>
+  );
+}
+
+/* ── UsersPanel ──────────────────────────────────────────── */
+
+interface UserRecord {
+  id: string;
+  username: string;
+  email: string;
+  full_name: string | null;
+  roles: string[];
+  is_active: boolean;
+  is_superuser: boolean;
+  created_at: string;
+  last_login: string | null;
+}
+
+function UsersPanel({ apiBase }: { apiBase: string }) {
+  const [userList, setUserList]   = useState<UserRecord[]>([]);
+  const [loading, setLoading]     = useState(true);
+  const [showForm, setShowForm]   = useState(false);
+  const [username, setUsername]   = useState("");
+  const [email, setEmail]         = useState("");
+  const [password, setPassword]   = useState("");
+  const [fullName, setFullName]   = useState("");
+  const [creating, setCreating]   = useState(false);
+  const [showPw, setShowPw]       = useState(false);
+  const [msg, setMsg]             = useState<{ ok: boolean; text: string } | null>(null);
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(`${apiBase}/api/v1/users/`, { headers: authHeaders() });
+      if (r.ok) setUserList(await r.json());
+    } catch {}
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, [apiBase]);
+
+  const createUser = async () => {
+    if (!username.trim() || !email.trim() || !password.trim()) {
+      setMsg({ ok: false, text: "Username, email and password are required" });
+      return;
+    }
+    setCreating(true);
+    setMsg(null);
+    try {
+      const r = await fetch(`${apiBase}/api/v1/users/`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ username: username.trim(), email: email.trim(), password, full_name: fullName.trim() || undefined }),
+      });
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.detail ?? "Failed to create user");
+      setMsg({ ok: true, text: `User "${username}" created — they can now login immediately.` });
+      setUsername(""); setEmail(""); setPassword(""); setFullName("");
+      setShowForm(false);
+      await load();
+    } catch (e: unknown) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "Error" });
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const toggleActive = async (u: UserRecord) => {
+    try {
+      await fetch(`${apiBase}/api/v1/users/${u.id}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ is_active: !u.is_active }),
+      });
+      await load();
+    } catch {}
+  };
+
+  const deleteUser = async (u: UserRecord) => {
+    if (!confirm(`Permanently delete user "${u.username}"? This cannot be undone.`)) return;
+    try {
+      await fetch(`${apiBase}/api/v1/users/${u.id}`, { method: "DELETE", headers: authHeaders() });
+      await load();
+    } catch {}
+  };
+
+  const inputCls = "w-full rounded-lg border border-[#1f2937] bg-[#070d1a] px-3 py-2 text-xs text-slate-300 placeholder-slate-600 focus:border-amber-500/50 focus:outline-none";
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <p className="text-[11px] font-mono uppercase tracking-widest text-slate-600">Platform Users</p>
+        <button
+          onClick={() => { setShowForm((v) => !v); setMsg(null); }}
+          className="flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/20 px-3 py-1.5 text-xs font-medium text-amber-400 transition-all hover:bg-amber-500/20"
+        >
+          <UserPlus className="h-3.5 w-3.5" />
+          Add User
+        </button>
+      </div>
+
+      {msg && (
+        <div className={`flex items-center gap-2 rounded-lg border px-3 py-2 text-xs ${
+          msg.ok ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-400" : "border-red-500/25 bg-red-500/10 text-red-400"
+        }`}>
+          {msg.ok ? <CheckCircle className="h-3.5 w-3.5 flex-shrink-0" /> : <AlertCircle className="h-3.5 w-3.5 flex-shrink-0" />}
+          {msg.text}
+        </div>
+      )}
+
+      {showForm && (
+        <div className="rounded-xl border border-amber-500/20 bg-[#0c111d] p-5 space-y-3">
+          <h3 className="text-[11px] font-mono uppercase tracking-widest text-amber-500/70 mb-1">New User</h3>
+          <div className="grid grid-cols-2 gap-3">
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-slate-400">Username *</label>
+              <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="john_doe" className={inputCls} />
+            </div>
+            <div>
+              <label className="mb-1 block text-[11px] font-medium text-slate-400">Full Name</label>
+              <input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="John Doe" className={inputCls} />
+            </div>
+          </div>
+          <div>
+            <label className="mb-1 block text-[11px] font-medium text-slate-400">Email Address *</label>
+            <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} placeholder="john@company.com" className={inputCls} />
+          </div>
+          <div>
+            <label className="mb-1 block text-[11px] font-medium text-slate-400">Password * (min 6 chars)</label>
+            <div className="relative">
+              <input
+                type={showPw ? "text" : "password"}
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Set a strong password"
+                className="w-full rounded-lg border border-[#1f2937] bg-[#070d1a] px-3 py-2 pr-9 text-xs text-slate-300 placeholder-slate-600 focus:border-amber-500/50 focus:outline-none"
+              />
+              <button type="button" onClick={() => setShowPw((s) => !s)} className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300">
+                {showPw ? <EyeOff className="h-3.5 w-3.5" /> : <Eye className="h-3.5 w-3.5" />}
+              </button>
+            </div>
+            <p className="mt-1 text-[10px] text-slate-600">The user can login with this username and password immediately.</p>
+          </div>
+          <div className="flex items-center justify-end gap-2 pt-1">
+            <button onClick={() => setShowForm(false)} className="rounded-lg border border-[#1f2937] px-3 py-1.5 text-xs text-slate-500 hover:text-slate-300">
+              Cancel
+            </button>
+            <button
+              onClick={createUser}
+              disabled={creating}
+              className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-1.5 text-xs font-semibold text-black hover:bg-amber-400 disabled:opacity-60"
+            >
+              {creating ? <RefreshCw className="h-3 w-3 animate-spin" /> : <UserPlus className="h-3 w-3" />}
+              Create User
+            </button>
+          </div>
+        </div>
+      )}
+
+      {loading ? (
+        <div className="flex items-center justify-center py-8 text-slate-600 text-xs">
+          <RefreshCw className="h-4 w-4 animate-spin mr-2" /> Loading users…
+        </div>
+      ) : userList.length === 0 ? (
+        <div className="rounded-xl border border-dashed border-[#1f2937] py-8 text-center text-xs text-slate-600">
+          No users found. Add your first user above.
+        </div>
+      ) : (
+        <div className="space-y-2">
+          {userList.map((u) => (
+            <div key={u.id} className="flex items-center justify-between gap-3 rounded-xl border border-[#1f2937] bg-[#0c111d] px-4 py-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className="font-mono text-sm text-slate-200">{u.username}</span>
+                  {u.roles.map((r) => (
+                    <span key={r} className={`rounded-full px-2 py-0.5 text-[10px] border ${
+                      r === "admin" ? "bg-red-500/10 border-red-500/20 text-red-400" : "bg-amber-500/10 border-amber-500/20 text-amber-400"
+                    }`}>{r}</span>
+                  ))}
+                  {!u.is_active && (
+                    <span className="rounded-full bg-slate-500/10 border border-slate-500/20 px-2 py-0.5 text-[10px] text-slate-500">Inactive</span>
+                  )}
+                </div>
+                <p className="text-[11px] text-slate-500 mt-0.5">{u.email}{u.full_name ? ` · ${u.full_name}` : ""}</p>
+                {u.last_login && <p className="text-[10px] text-slate-700 mt-0.5">Last login: {new Date(u.last_login).toLocaleString()}</p>}
+              </div>
+              <div className="flex items-center gap-2 flex-shrink-0">
+                <button
+                  onClick={() => toggleActive(u)}
+                  title={u.is_active ? "Deactivate" : "Activate"}
+                  className={`flex items-center gap-1 rounded-lg border px-2.5 py-1.5 text-[11px] transition-all ${
+                    u.is_active
+                      ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-400 hover:bg-red-500/10 hover:text-red-400 hover:border-red-500/25"
+                      : "border-slate-600/25 bg-slate-600/10 text-slate-500 hover:bg-emerald-500/10 hover:text-emerald-400 hover:border-emerald-500/25"
+                  }`}
+                >
+                  {u.is_active ? <ToggleRight className="h-3.5 w-3.5" /> : <ToggleLeft className="h-3.5 w-3.5" />}
+                  {u.is_active ? "Active" : "Inactive"}
+                </button>
+                <button
+                  onClick={() => deleteUser(u)}
+                  className="rounded-lg border border-[#1f2937] p-1.5 text-slate-600 hover:border-red-500/25 hover:bg-red-500/10 hover:text-red-400 transition-all"
+                >
+                  <Trash2 className="h-3.5 w-3.5" />
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      <div className="rounded-xl border border-[#1f2937] bg-[#070d1a] p-3">
+        <p className="text-[11px] text-slate-600">
+          New users are assigned the <strong className="text-amber-500/70">agent</strong> role by default and can login immediately.
+          Share the login URL with them after creation.
+        </p>
       </div>
     </div>
   );
@@ -544,6 +763,8 @@ export default function SettingsPage() {
 
   const sectionContent: Record<string, React.ReactNode> = {
     company: <CompanyPanel apiBase={process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080"} />,
+
+    users: <UsersPanel apiBase={process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080"} />,
 
     profile: (
       <div className="space-y-6">
