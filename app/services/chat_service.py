@@ -125,19 +125,90 @@ async def _db_keyword_kb_context(query: str, tenant_id: str | None, k: int) -> l
         return []
 
 
-async def _retrieve_kb_context(query: str, tenant_id: str | None = None, *, k: int = 8) -> str:
-    """Best-effort retrieval of relevant knowledge-base snippets.
+# Department → KB category mapping.  None means "no category filter" (Reception
+# talks about everything). Add rows as new departments/categories are introduced.
+_DEPT_CATEGORY_MAP: dict[str, str | None] = {
+    "sales":          "Sales",
+    "hr":             "HR",
+    "human_resources":"HR",
+    "finance":        "Finance",
+    "technology":     "IT",
+    "marketing":      "Marketing",
+    "customer_care":  "Support",
+    "support":        "Support",
+    "reception":      None,
+    "general":        None,
+}
 
-    Tries semantic (vector) search first, then falls back to a Postgres
-    keyword search so uploaded documents are always reachable even when
-    embeddings are unavailable. Returns a formatted string of the top
-    matches, or "" if nothing relevant is found. Never raises — RAG is an
-    enhancement, not a hard dependency of a chat turn.
+
+async def _db_category_kb_context(category: str, tenant_id: str | None, *, k: int = 4) -> list[str]:
+    """Pull ALL docs from a specific KB category — used to ensure dept agents
+    always see their own category's content regardless of query semantics.
+    Never raises.
     """
-    snippets = _vector_kb_context(query, tenant_id, k)
-    if not snippets:
-        snippets = await _db_keyword_kb_context(query, tenant_id, k)
-    return "\n\n".join(snippets[:k])
+    try:
+        from sqlalchemy import select
+
+        from app.db.models import KnowledgeDocumentModel
+        from app.db.session import AsyncSessionLocal
+
+        async with AsyncSessionLocal() as session:
+            stmt = (
+                select(KnowledgeDocumentModel)
+                .where(KnowledgeDocumentModel.category.ilike(category))
+            )
+            if tenant_id:
+                stmt = stmt.where(KnowledgeDocumentModel.tenant_id == tenant_id)
+            stmt = stmt.order_by(KnowledgeDocumentModel.created_at.desc()).limit(k)
+            rows = (await session.execute(stmt)).scalars().all()
+
+        return [
+            f"[{doc.title} – {category}] {(doc.content or '').strip()[:2000]}"
+            for doc in rows
+            if (doc.content or "").strip()
+        ]
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("Category KB retrieval skipped: {}", exc)
+        return []
+
+
+async def _retrieve_kb_context(
+    query: str,
+    tenant_id: str | None = None,
+    *,
+    k: int = 8,
+    department: str | None = None,
+) -> str:
+    """Return relevant KB snippets as a formatted string.
+
+    Strategy:
+    1.  Category-pin  – fetch up to k/2 docs from the agent's own KB category
+        so department-specific content (products, policies, etc.) ALWAYS
+        surfaces even when the query doesn't semantically match all of them.
+    2.  Semantic/keyword search – pull the top-k query-matched snippets.
+    3.  Merge  – category-pinned first, then query-matched, deduped, capped at k.
+    """
+    # Category-pinned docs for this department
+    dept_cat = _DEPT_CATEGORY_MAP.get(str(department or "").lower())
+    dept_snippets: list[str] = []
+    if dept_cat:
+        dept_snippets = await _db_category_kb_context(dept_cat, tenant_id, k=min(4, k // 2))
+
+    # Semantic retrieval (vector first, keyword fallback)
+    query_snippets = _vector_kb_context(query, tenant_id, k)
+    if not query_snippets:
+        query_snippets = await _db_keyword_kb_context(query, tenant_id, k)
+
+    # Merge deduped (dept-specific wins any tie)
+    seen: set[str] = set()
+    merged: list[str] = []
+    for snippet in dept_snippets + query_snippets:
+        key = snippet[:120]
+        if key not in seen:
+            seen.add(key)
+            merged.append(snippet)
+
+    return "\n\n".join(merged[:k])
 
 
 class ChatService:
@@ -148,12 +219,9 @@ class ChatService:
         memory = memory_manager()
         router = workforce_router()
 
-        # Pull recent history once: used both for first-turn detection AND to
-        # make the active department "sticky" across turns. Without this the
-        # department was re-guessed from each message, so a transfer reset back
-        # to the keyword-matched department on the very next turn.
+        # Pull recent history once: used for department-stickiness, first-turn
+        # detection, and RAG context.
         prior_history = await memory.recent_history(session_id, limit=10)
-        first_turn = len(prior_history) == 0
 
         session_department: Department | None = None
         for msg in reversed(prior_history):
@@ -175,6 +243,16 @@ class ChatService:
             or session_department
             or router.choose_department(request.message)
         )
+
+        # first_turn is True when THIS department has never responded yet.
+        # This handles both brand-new sessions AND transfers to a new department:
+        # the incoming agent will introduce themselves once, then stay silent on
+        # the intro for subsequent turns.
+        dept_agent_msgs = [
+            m for m in prior_history
+            if m.role == Role.AGENT and str(getattr(m, "department", "")) == str(department)
+        ]
+        first_turn = len(dept_agent_msgs) == 0
 
         ctx = SessionContext(
             session_id=session_id,
@@ -203,7 +281,7 @@ class ChatService:
             # agents (esp. Sales/Marketing/Care) can answer about uploaded
             # products, policies and documents.
             task = request.message
-            kb = await _retrieve_kb_context(request.message, request.tenant_id)
+            kb = await _retrieve_kb_context(request.message, request.tenant_id, department=str(department))
             if kb:
                 task = (
                     f"{request.message}\n\n"
@@ -320,7 +398,6 @@ class ChatService:
         router = workforce_router()
 
         prior_history = await memory.recent_history(session_id, limit=12)
-        first_turn = len(prior_history) == 0
 
         session_department: Department | None = None
         for msg in reversed(prior_history):
@@ -340,6 +417,14 @@ class ChatService:
             or session_department
             or router.choose_department(request.message)
         )
+
+        # first_turn = True when this specific department hasn't spoken yet
+        # (handles both session start and post-transfer introductions).
+        dept_agent_msgs = [
+            m for m in prior_history
+            if m.role == Role.AGENT and str(getattr(m, "department", "")) == str(department)
+        ]
+        first_turn = len(dept_agent_msgs) == 0
 
         ctx = SessionContext(
             session_id=session_id,
@@ -408,7 +493,7 @@ class ChatService:
                                               tenant_id=request.tenant_id or "default")
                     if profile else "You are a helpful AI assistant."
                 )
-                kb = await _retrieve_kb_context(request.message, request.tenant_id)
+                kb = await _retrieve_kb_context(request.message, request.tenant_id, department=str(department))
                 if kb:
                     system_prompt += "\n\n# Enterprise knowledge base (use this to answer)\n" + kb
 
@@ -546,9 +631,14 @@ async def stream_chat_tokens(request: ChatRequest):
         )
 
         # Pull recent conversation so the model keeps context across turns and
-        # only introduces itself once (first_turn == no prior history).
+        # only introduces itself once per department (first_turn == this dept
+        # hasn't spoken yet, handles both session-start and post-transfer intros).
         prior_history = await memory.recent_history(session_id, limit=12)
-        first_turn = len(prior_history) == 0
+        dept_agent_msgs_stream = [
+            m for m in prior_history
+            if m.role == Role.AGENT and str(getattr(m, "department", "")) == str(department)
+        ]
+        first_turn = len(dept_agent_msgs_stream) == 0
 
         system_prompt = (
             await build_system_prompt(profile, first_turn=first_turn,
