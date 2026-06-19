@@ -28,6 +28,8 @@ import {
   GitBranch,
   Plug,
   UserCog,
+  Activity,
+  Lock,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { clearAuth, getUser, type AuthUser } from "@/lib/auth";
@@ -42,6 +44,7 @@ const NAV = [
   { href: "/escalations", icon: AlertTriangle, label: "Escalations" },
   { href: "/knowledge", icon: BookOpen, label: "Knowledge Base" },
   { href: "/integrations", icon: Plug, label: "Integrations", adminOnly: true },
+  { href: "/monitoring", icon: Activity, label: "System Monitor", adminOnly: true },
   { href: "/audit", icon: ClipboardList, label: "Audit Log", adminOnly: true },
   { href: "/admin/users", icon: UserCog, label: "User Management", adminOnly: true },
   { href: "/settings", icon: Settings, label: "Settings" },
@@ -105,7 +108,7 @@ export function Sidebar() {
 
       {/* Main nav */}
       <nav className="flex-shrink-0 space-y-1 px-2 pt-4">
-        {NAV.filter(({ adminOnly }) => !adminOnly || user?.roles?.includes("admin")).map(({ href, icon: Icon, label }) => {
+        {NAV.filter(({ adminOnly }) => !adminOnly || user?.roles?.includes("admin")).map(({ href, icon: Icon, label, adminOnly }) => {
           const active = path === href;
           return (
             <Link
@@ -121,7 +124,12 @@ export function Sidebar() {
               )}
             >
               <Icon className="h-4 w-4 flex-shrink-0" />
-              {!collapsed && <span>{label}</span>}
+              {!collapsed && (
+                <>
+                  <span className="flex-1">{label}</span>
+                  {adminOnly && <Lock className="h-2.5 w-2.5 flex-shrink-0 text-amber-600/50" />}
+                </>
+              )}
             </Link>
           );
         })}
