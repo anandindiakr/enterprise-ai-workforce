@@ -21,6 +21,7 @@ from app.api.routes.escalations import router as escalations_router
 from app.api.routes.knowledge import router as knowledge_router
 from app.api.routes.audit import router as audit_router
 from app.api.routes.settings import router as settings_router
+from app.api.routes.alerts import router as alerts_router
 from app.api.ws import chat_ws, voice_ws, events_ws
 from app.services.secrets_service import load_secrets_to_env
 from app.core.config import settings
@@ -158,6 +159,7 @@ def create_app() -> FastAPI:
     app.include_router(knowledge_router, prefix=api_v1)
     app.include_router(audit_router, prefix=api_v1)
     app.include_router(settings_router, prefix=api_v1)
+    app.include_router(alerts_router, prefix=api_v1)
     app.include_router(chat_ws.router, prefix=api_v1)
     app.include_router(voice_ws.router, prefix=api_v1)
     app.include_router(events_ws.router, prefix=api_v1)

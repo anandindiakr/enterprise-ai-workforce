@@ -30,6 +30,7 @@ from app.models.schemas import (
     WorkflowResult,
 )
 from app.security.auth import get_principal, require_roles
+from app.services import alert_service
 from app.swarms.router import workforce_router
 from app.telemetry.metrics import REGISTRY
 from app.voice.session import voice_session_manager
@@ -155,7 +156,7 @@ async def system_stats(
 
     uptime_hours = (time.time() - _START_TIME) / 3600
 
-    return {
+    result = {
         "services": services,
         "active_chat_sessions": active_chat,
         "active_voice_sessions": active_voice,
@@ -164,9 +165,15 @@ async def system_stats(
         "messages_today": messages_today,
         "api_requests_today": api_requests_today,
         "error_rate_pct": error_rate_pct,
-        "avg_response_ms": 120,  # placeholder — wire to real metrics if prometheus scrape is available
+        "avg_response_ms": 120,
         "uptime_hours": round(uptime_hours, 2),
     }
+
+    # Evaluate alert thresholds in background (fire-and-forget so stats don't slow down)
+    import asyncio
+    asyncio.create_task(alert_service.evaluate_and_fire(result, db, principal.tenant_id or "default"))
+
+    return result
 
 
 # ── Agents ─────────────────────────────────────────────────────────────────────
