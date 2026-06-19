@@ -41,8 +41,8 @@ const NAV = [
   { href: "/analytics", icon: BarChart3, label: "Analytics" },
   { href: "/escalations", icon: AlertTriangle, label: "Escalations" },
   { href: "/knowledge", icon: BookOpen, label: "Knowledge Base" },
-  { href: "/integrations", icon: Plug, label: "Integrations" },
-  { href: "/audit", icon: ClipboardList, label: "Audit Log" },
+  { href: "/integrations", icon: Plug, label: "Integrations", adminOnly: true },
+  { href: "/audit", icon: ClipboardList, label: "Audit Log", adminOnly: true },
   { href: "/admin/users", icon: UserCog, label: "User Management", adminOnly: true },
   { href: "/settings", icon: Settings, label: "Settings" },
 ];

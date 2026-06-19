@@ -8,6 +8,7 @@ import {
   ChevronRight, Zap, Trash2, RefreshCw, Globe,
   Building2, ChevronDown, ChevronUp, Bot,
   Users, UserPlus, UserX, ToggleLeft, ToggleRight,
+  Lock,
 } from "lucide-react";
 import { getUser, setToken, clearAuth, type AuthUser, authHeaders } from "@/lib/auth";
 
@@ -18,17 +19,18 @@ interface SettingsSection {
   label: string;
   icon: React.ElementType;
   description: string;
+  adminOnly?: boolean;
 }
 
 const SECTIONS: SettingsSection[] = [
-  { id: "company",        label: "Company & Agents", icon: Building2, description: "Brand identity and per-agent scripts" },
-  { id: "users",          label: "User Management", icon: Users,    description: "Add and manage platform users (Admin only)" },
-  { id: "profile",        label: "Profile",         icon: User,     description: "Your account details and preferences" },
-  { id: "api_keys",       label: "API Keys",        icon: Key,      description: "Configure AI provider credentials" },
-  { id: "notifications",  label: "Notifications",   icon: Bell,     description: "Alert and notification settings" },
-  { id: "security",       label: "Security",        icon: Shield,   description: "Password and authentication settings" },
-  { id: "integrations",   label: "Integrations",    icon: Database, description: "CRM, ERP, and third-party connections" },
-  { id: "system",         label: "System",          icon: Cpu,      description: "Platform behaviour and advanced options" },
+  { id: "company",        label: "Company & Agents",  icon: Building2, description: "Brand identity and per-agent scripts",       adminOnly: true  },
+  { id: "users",          label: "User Management",   icon: Users,     description: "Add and manage platform users",              adminOnly: true  },
+  { id: "profile",        label: "Profile",           icon: User,      description: "Your account details and preferences"                         },
+  { id: "api_keys",       label: "API Keys",          icon: Key,       description: "Configure AI provider credentials",          adminOnly: true  },
+  { id: "notifications",  label: "Notifications",     icon: Bell,      description: "Alert and notification settings"                              },
+  { id: "security",       label: "Security",          icon: Shield,    description: "Password and authentication settings"                         },
+  { id: "integrations",   label: "Integrations",      icon: Database,  description: "CRM, ERP, and third-party connections",      adminOnly: true  },
+  { id: "system",         label: "System",            icon: Cpu,       description: "Platform behaviour and advanced options",    adminOnly: true  },
 ];
 
 /* ── Sub-components ──────────────────────────────────────── */
@@ -608,7 +610,7 @@ function IntegrationsPanel({ apiBase }: { apiBase: string }) {
 
 export default function SettingsPage() {
   const router = useRouter();
-  const [activeSection, setActiveSection] = useState("company");
+  const [activeSection, setActiveSection] = useState("profile");
   const [user, setUser] = useState<AuthUser | null>(null);
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
@@ -980,7 +982,7 @@ export default function SettingsPage() {
           </div>
         </div>
         <nav className="flex-1 space-y-0.5 p-2 pt-3">
-          {SECTIONS.map(({ id, label, icon: Icon, description }) => (
+          {SECTIONS.filter((s) => !s.adminOnly || user?.roles?.includes("admin")).map(({ id, label, icon: Icon, adminOnly }) => (
             <button
               key={id}
               onClick={() => setActiveSection(id)}
@@ -991,7 +993,8 @@ export default function SettingsPage() {
               }`}
             >
               <Icon className="h-3.5 w-3.5 flex-shrink-0" />
-              <span>{label}</span>
+              <span className="flex-1">{label}</span>
+              {adminOnly && <Lock className="h-2.5 w-2.5 flex-shrink-0 text-amber-600/60" title="Admin only" />}
             </button>
           ))}
         </nav>
@@ -1020,21 +1023,42 @@ export default function SettingsPage() {
                 <AlertCircle className="h-3 w-3" /> {error}
               </span>
             )}
-            <button
-              onClick={handleSave}
-              disabled={saving}
-              className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-1.5 text-xs font-semibold text-black transition-all hover:bg-amber-400 disabled:opacity-60"
-            >
-              {saving ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
-              Save Changes
-            </button>
+            {/* Only show Save for non-admin-only sections, or when admin */}
+            {(!SECTIONS.find((s) => s.id === activeSection)?.adminOnly || user?.roles?.includes("admin")) && (
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex items-center gap-1.5 rounded-lg bg-amber-500 px-4 py-1.5 text-xs font-semibold text-black transition-all hover:bg-amber-400 disabled:opacity-60"
+              >
+                {saving ? <RefreshCw className="h-3 w-3 animate-spin" /> : <Save className="h-3 w-3" />}
+                Save Changes
+              </button>
+            )}
           </div>
         </div>
 
         {/* Section content */}
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mx-auto max-w-2xl">
-            {sectionContent[activeSection] ?? null}
+            {(() => {
+              const section = SECTIONS.find((s) => s.id === activeSection);
+              const isAdmin = user?.roles?.includes("admin");
+              if (section?.adminOnly && !isAdmin) {
+                return (
+                  <div className="flex flex-col items-center justify-center gap-4 rounded-2xl border border-[#1f2937] bg-[#0c111d] py-20 text-center">
+                    <div className="flex h-14 w-14 items-center justify-center rounded-full border border-amber-500/20 bg-amber-500/10">
+                      <Lock className="h-6 w-6 text-amber-500/60" />
+                    </div>
+                    <div>
+                      <h3 className="text-sm font-semibold text-slate-300">Admin Access Required</h3>
+                      <p className="mt-1 text-xs text-slate-500">This section is restricted to administrators only.</p>
+                      <p className="mt-0.5 text-xs text-slate-600">Contact your admin if you need access.</p>
+                    </div>
+                  </div>
+                );
+              }
+              return sectionContent[activeSection] ?? null;
+            })()}
           </div>
         </div>
       </div>
