@@ -994,7 +994,7 @@ export default function SettingsPage() {
             >
               <Icon className="h-3.5 w-3.5 flex-shrink-0" />
               <span className="flex-1">{label}</span>
-              {adminOnly && <Lock className="h-2.5 w-2.5 flex-shrink-0 text-amber-600/60" title="Admin only" />}
+              {adminOnly && <span title="Admin only"><Lock className="h-2.5 w-2.5 flex-shrink-0 text-amber-600/60" /></span>}
             </button>
           ))}
         </nav>
