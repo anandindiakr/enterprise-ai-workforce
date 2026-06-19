@@ -49,6 +49,7 @@ const NAV = [
   { href: "/audit", icon: ClipboardList, label: "Audit Log", adminOnly: true },
   { href: "/admin/users", icon: UserCog, label: "User Management", adminOnly: true },
   { href: "/tenants", icon: Building2, label: "Tenants", adminOnly: true },
+  { href: "/portal", icon: LayoutDashboard, label: "My Portal" },
   { href: "/settings", icon: Settings, label: "Settings" },
 ];
 

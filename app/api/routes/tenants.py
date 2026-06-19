@@ -92,6 +92,23 @@ async def list_tenants(
     return {"tenants": [_tenant_to_dict(r) for r in rows], "total": total}
 
 
+# ── Get current user's own tenant ────────────────────────────────────────────
+
+@router.get("/me/info")
+async def get_my_tenant(
+    principal: Principal = Depends(get_principal),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return the tenant of the currently authenticated user (no slug needed)."""
+    slug = principal.tenant_id or "default"
+    row = (await db.execute(
+        select(TenantModel).where(TenantModel.slug == slug)
+    )).scalar_one_or_none()
+    if not row:
+        raise HTTPException(status_code=404, detail="Tenant not found")
+    return _tenant_to_dict(row)
+
+
 # ── Get single tenant ─────────────────────────────────────────────────────────
 
 @router.get("/{tenant_slug}")
