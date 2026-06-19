@@ -97,6 +97,14 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     asyncio.create_task(_delayed_mcp_init())
 
+    # Re-index any KB docs missing from ChromaDB (handles container restarts)
+    async def _delayed_reindex() -> None:
+        await asyncio.sleep(8)  # let ChromaDB service fully start first
+        from app.api.routes.knowledge import startup_reindex
+        await startup_reindex()
+
+    asyncio.create_task(_delayed_reindex())
+
     try:
         yield
     finally:
