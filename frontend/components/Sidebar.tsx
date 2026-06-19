@@ -85,7 +85,7 @@ export function Sidebar() {
   return (
     <aside
       className={cn(
-        "relative flex flex-col border-r border-[#1f2937] bg-[#070d1a] transition-all duration-300",
+        "relative flex h-screen flex-col border-r border-[#1f2937] bg-[#070d1a] transition-all duration-300",
         collapsed ? "w-[60px]" : "w-[220px]"
       )}
     >
@@ -109,59 +109,62 @@ export function Sidebar() {
         )}
       </div>
 
-      {/* Main nav */}
-      <nav className="flex-shrink-0 space-y-1 px-2 pt-4">
-        {NAV.filter(({ adminOnly }) => !adminOnly || user?.roles?.includes("admin")).map(({ href, icon: Icon, label, adminOnly }) => {
-          const active = path === href;
-          return (
-            <Link
-              key={href}
-              href={href}
-              title={collapsed ? label : undefined}
-              className={cn(
-                "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm transition-all",
-                collapsed ? "justify-center" : "",
-                active
-                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                  : "text-slate-400 hover:bg-[#111827] hover:text-slate-200"
-              )}
-            >
-              <Icon className="h-4 w-4 flex-shrink-0" />
-              {!collapsed && (
-                <>
-                  <span className="flex-1">{label}</span>
-                  {adminOnly && <Lock className="h-2.5 w-2.5 flex-shrink-0 text-amber-600/50" />}
-                </>
-              )}
-            </Link>
-          );
-        })}
-      </nav>
-
-      {/* Departments */}
-      {!collapsed && (
-        <div className="mt-6 flex-1 overflow-y-auto px-4">
-          <p className="mb-2 text-[10px] uppercase tracking-[0.15em] text-slate-600">
-            Departments
-          </p>
-          <div className="space-y-0.5">
-            {DEPARTMENTS.map(({ id, label, icon: Icon, color }) => (
+      {/* Scrollable nav + departments */}
+      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-[#1f2937]">
+        {/* Main nav */}
+        <nav className="space-y-1 px-2 pt-4">
+          {NAV.filter(({ adminOnly }) => !adminOnly || user?.roles?.includes("admin")).map(({ href, icon: Icon, label, adminOnly }) => {
+            const active = path === href;
+            return (
               <Link
-                key={id}
-                href={`/chat?dept=${id}`}
-                className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs text-slate-500 transition-colors hover:bg-[#111827] hover:text-slate-300"
+                key={href}
+                href={href}
+                title={collapsed ? label : undefined}
+                className={cn(
+                  "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm transition-all",
+                  collapsed ? "justify-center" : "",
+                  active
+                    ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                    : "text-slate-400 hover:bg-[#111827] hover:text-slate-200"
+                )}
               >
-                <Icon className={cn("h-3 w-3 flex-shrink-0", color)} />
-                <span>{label}</span>
-                <span className="ml-auto h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-500 status-pulse" />
+                <Icon className="h-4 w-4 flex-shrink-0" />
+                {!collapsed && (
+                  <>
+                    <span className="flex-1">{label}</span>
+                    {adminOnly && <Lock className="h-2.5 w-2.5 flex-shrink-0 text-amber-600/50" />}
+                  </>
+                )}
               </Link>
-            ))}
-          </div>
-        </div>
-      )}
+            );
+          })}
+        </nav>
 
-      {/* Footer: user info + logout */}
-      <div className="mt-auto border-t border-[#1f2937] p-3 space-y-2">
+        {/* Departments */}
+        {!collapsed && (
+          <div className="mt-6 px-4 pb-4">
+            <p className="mb-2 text-[10px] uppercase tracking-[0.15em] text-slate-600">
+              Departments
+            </p>
+            <div className="space-y-0.5">
+              {DEPARTMENTS.map(({ id, label, icon: Icon, color }) => (
+                <Link
+                  key={id}
+                  href={`/chat?dept=${id}`}
+                  className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs text-slate-500 transition-colors hover:bg-[#111827] hover:text-slate-300"
+                >
+                  <Icon className={cn("h-3 w-3 flex-shrink-0", color)} />
+                  <span>{label}</span>
+                  <span className="ml-auto h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-500 status-pulse" />
+                </Link>
+              ))}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Footer: user info + logout — pinned at bottom */}
+      <div className="flex-shrink-0 border-t border-[#1f2937] p-3 space-y-2">
         {!collapsed && user && (
           <div className="flex items-center gap-2 rounded-lg bg-[#111827] px-2.5 py-2">
             <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-amber-500/20">

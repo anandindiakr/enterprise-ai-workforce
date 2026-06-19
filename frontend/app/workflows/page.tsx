@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useCallback } from "react";
 import { useRouter } from "next/navigation";
-import { getToken, authHeaders } from "@/lib/auth";
+import { getToken, getUser, authHeaders } from "@/lib/auth";
 import {
   Zap,
   Play,
@@ -99,7 +99,7 @@ export default function WorkflowsPage() {
         body: JSON.stringify({
           task,
           department: wf.department,
-          user_id: "admin",
+          user_id: getUser()?.username ?? "admin",
           context: { workflow_template: wf.id },
         }),
       });

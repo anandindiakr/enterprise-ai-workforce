@@ -152,7 +152,18 @@ async def system_stats(
     })
 
     services.append({"name": "API Server", "status": "healthy", "details": "Serving requests"})
-    services.append({"name": "Celery Worker", "status": "healthy", "details": "Running"})
+
+    # Check Celery worker (actually ping it instead of assuming healthy)
+    try:
+        from app.workers.celery_app import celery_app
+        insp = celery_app.control.inspect(timeout=1.0)
+        stats = insp.stats()
+        if stats:
+            services.append({"name": "Celery Worker", "status": "healthy", "details": f"{len(stats)} worker(s) active"})
+        else:
+            services.append({"name": "Celery Worker", "status": "degraded", "details": "No active workers found"})
+    except Exception:
+        services.append({"name": "Celery Worker", "status": "degraded", "details": "Cannot reach worker"})
 
     uptime_hours = (time.time() - _START_TIME) / 3600
 
@@ -383,9 +394,9 @@ async def list_workflows(_: Principal = Depends(get_principal)) -> dict:
 @router.post("/workflows", response_model=WorkflowResult)
 async def run_workflow(
     request: WorkflowRequest,
-    _: Principal = Depends(require_roles("agent")),
+    _: Principal = Depends(get_principal),
 ) -> WorkflowResult:
-    """Execute a workflow via the swarm router."""
+    """Execute a workflow via the swarm router. Any authenticated user may run workflows."""
     return await workforce_router().execute(request)
 
 
