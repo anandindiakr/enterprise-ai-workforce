@@ -176,6 +176,109 @@ async def system_stats(
     return result
 
 
+# ── Per-user statistics (admin only) ──────────────────────────────────────────
+
+@router.get("/admin/users/stats")
+async def user_stats(
+    principal: Principal = Depends(require_roles("admin")),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Return per-user activity breakdown for the tenant."""
+    tenant_id = principal.tenant_id or "default"
+    now = datetime.now(timezone.utc)
+    today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    thirty_days_ago = now - timedelta(days=30)
+
+    # All users in tenant
+    users_result = await db.execute(
+        select(UserModel).where(UserModel.tenant_id == tenant_id)
+    )
+    users = users_result.scalars().all()
+
+    stats = []
+    for u in users:
+        user_id_str = str(u.id)
+
+        # Chat sessions (all time + last 30 days)
+        sess_all = await db.execute(
+            select(func.count(ChatSessionModel.id)).where(
+                ChatSessionModel.user_id == u.id
+            )
+        )
+        sess_30 = await db.execute(
+            select(func.count(ChatSessionModel.id)).where(
+                ChatSessionModel.user_id == u.id,
+                ChatSessionModel.created_at >= thirty_days_ago,
+            )
+        )
+
+        # Messages sent
+        msgs_all = await db.execute(
+            select(func.count(ChatMessageModel.id)).join(
+                ChatSessionModel, ChatMessageModel.session_id == ChatSessionModel.id
+            ).where(
+                ChatSessionModel.user_id == u.id,
+                ChatMessageModel.role == "user",
+            )
+        )
+        msgs_today = await db.execute(
+            select(func.count(ChatMessageModel.id)).join(
+                ChatSessionModel, ChatMessageModel.session_id == ChatSessionModel.id
+            ).where(
+                ChatSessionModel.user_id == u.id,
+                ChatMessageModel.role == "user",
+                ChatMessageModel.created_at >= today_start,
+            )
+        )
+
+        # API events (feature usage proxy)
+        audit_events = await db.execute(
+            select(AuditLogModel.action, func.count(AuditLogModel.id)).where(
+                AuditLogModel.user_id == user_id_str,
+                AuditLogModel.created_at >= thirty_days_ago,
+            ).group_by(AuditLogModel.action).limit(10)
+        )
+        features_used = [row[0] for row in audit_events.all()]
+
+        # Last active (most recent audit log or login)
+        last_event = await db.execute(
+            select(AuditLogModel.created_at).where(
+                AuditLogModel.user_id == user_id_str
+            ).order_by(AuditLogModel.created_at.desc()).limit(1)
+        )
+        last_active_row = last_event.scalar_one_or_none()
+        last_active = last_active_row.isoformat() if last_active_row else (u.last_login.isoformat() if u.last_login else None)
+
+        # Escalations raised
+        esc_count_row = await db.execute(
+            select(func.count(EscalationModel.id)).where(
+                EscalationModel.tenant_id == tenant_id,
+                EscalationModel.user_id == user_id_str,
+            )
+        )
+        esc_count: int = esc_count_row.scalar_one_or_none() or 0
+
+        stats.append({
+            "user_id": user_id_str,
+            "username": u.username,
+            "email": u.email,
+            "full_name": u.full_name or u.username,
+            "roles": u.roles,
+            "is_active": u.is_active,
+            "joined_at": u.created_at.isoformat(),
+            "last_active": last_active,
+            "last_login": u.last_login.isoformat() if u.last_login else None,
+            "total_sessions": sess_all.scalar_one_or_none() or 0,
+            "sessions_last_30d": sess_30.scalar_one_or_none() or 0,
+            "total_messages": msgs_all.scalar_one_or_none() or 0,
+            "messages_today": msgs_today.scalar_one_or_none() or 0,
+            "escalations_raised": esc_count,
+            "features_used": features_used[:8],
+        })
+
+    return {"users": stats, "total": len(stats), "tenant_id": tenant_id}
+
+
 # ── Agents ─────────────────────────────────────────────────────────────────────
 
 @router.get("/agents")

@@ -136,6 +136,43 @@ class CompanySettingsModel(Base):
     updated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
 
+class TenantModel(Base):
+    """Organisation / company that uses the platform (multi-tenant)."""
+    __tablename__ = "tenants"
+
+    id: Mapped[uuid.UUID] = mapped_column(_UUID, primary_key=True, default=uuid.uuid4)
+    slug: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    admin_email: Mapped[str] = mapped_column(String(255), nullable=False)
+    plan: Mapped[str] = mapped_column(String(32), default="starter", nullable=False)  # free|starter|pro|enterprise
+    status: Mapped[str] = mapped_column(String(16), default="active", nullable=False, index=True)
+    max_users: Mapped[int] = mapped_column(Integer, default=10, nullable=False)
+    max_chat_sessions: Mapped[int] = mapped_column(Integer, default=1000, nullable=False)
+    max_voice_minutes: Mapped[int] = mapped_column(Integer, default=60, nullable=False)
+    settings: Mapped[dict] = mapped_column(_JSONB, default=dict, nullable=False)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+    trial_ends_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class TenantUsageModel(Base):
+    """Daily usage snapshot per tenant — for billing and analytics."""
+    __tablename__ = "tenant_usage"
+
+    id: Mapped[uuid.UUID] = mapped_column(_UUID, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    date: Mapped[datetime] = mapped_column(DateTime(timezone=True), nullable=False, index=True)
+    chat_sessions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    chat_messages: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    voice_sessions: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    voice_minutes: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    api_calls: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    active_users: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    escalations: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    knowledge_uploads: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+
 class SystemAlertModel(Base):
     """Persisted system alert history — fired when metric thresholds are breached."""
     __tablename__ = "system_alerts"

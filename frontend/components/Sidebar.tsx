@@ -30,6 +30,7 @@ import {
   UserCog,
   Activity,
   Lock,
+  Building2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { clearAuth, getUser, type AuthUser } from "@/lib/auth";
@@ -47,6 +48,7 @@ const NAV = [
   { href: "/monitoring", icon: Activity, label: "System Monitor", adminOnly: true },
   { href: "/audit", icon: ClipboardList, label: "Audit Log", adminOnly: true },
   { href: "/admin/users", icon: UserCog, label: "User Management", adminOnly: true },
+  { href: "/tenants", icon: Building2, label: "Tenants", adminOnly: true },
   { href: "/settings", icon: Settings, label: "Settings" },
 ];
 

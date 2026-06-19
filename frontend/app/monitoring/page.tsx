@@ -8,6 +8,7 @@ import {
   CheckCircle, AlertTriangle, XCircle, Clock, Users, MessageSquare,
   Mic, Zap, Shield, TrendingUp, HardDrive, Wifi, Bell, BellOff,
   Send, Settings2, Trash2, CheckCheck, ChevronDown, ChevronUp,
+  BarChart3,
 } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
@@ -51,6 +52,158 @@ interface AlertThresholds {
   error_rate_warning: number;
   error_rate_critical: number;
   high_escalations: number;
+}
+
+interface UserStatItem {
+  user_id: string;
+  username: string;
+  email: string;
+  role: string;
+  tenant_id: string;
+  is_active: boolean;
+  total_chat_sessions: number;
+  total_voice_sessions: number;
+  total_messages: number;
+  total_voice_minutes: number;
+  last_active?: string;
+  created_at: string;
+}
+
+interface UserStatsResponse {
+  users: UserStatItem[];
+  total: number;
+  summary: {
+    total_users: number;
+    active_users: number;
+    total_sessions: number;
+    total_messages: number;
+    total_voice_minutes: number;
+  };
+}
+
+function UserStatsPanel() {
+  const [data, setData] = useState<UserStatsResponse | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState("");
+  const [tenantFilter, setTenantFilter] = useState("all");
+
+  const fetchStats = useCallback(async () => {
+    setLoading(true);
+    try {
+      const r = await fetch(`${API}/api/v1/admin/users/stats?limit=100`, { headers: authHeaders() });
+      if (r.ok) setData(await r.json());
+    } catch {}
+    setLoading(false);
+  }, []);
+
+  useEffect(() => { fetchStats(); }, [fetchStats]);
+
+  const tenants = data ? [...new Set(data.users.map(u => u.tenant_id))].sort() : [];
+  const filtered = (data?.users ?? []).filter(u =>
+    (!search || u.username.toLowerCase().includes(search.toLowerCase()) ||
+      u.email.toLowerCase().includes(search.toLowerCase())) &&
+    (tenantFilter === "all" || u.tenant_id === tenantFilter)
+  );
+
+  return (
+    <div className="rounded-2xl border border-[#1f2937] bg-[#0c111d] p-5">
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-2">
+          <BarChart3 className="h-4 w-4 text-blue-400" />
+          <h2 className="text-xs font-semibold text-slate-300">User Statistics</h2>
+          {data && <span className="text-[10px] text-slate-600">{data.total} users</span>}
+        </div>
+        <button onClick={fetchStats} disabled={loading}
+          className="rounded-lg border border-[#1f2937] p-1.5 text-slate-500 hover:text-slate-300 disabled:opacity-50 transition-all">
+          <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+        </button>
+      </div>
+
+      {/* Summary row */}
+      {data && (
+        <div className="grid grid-cols-5 gap-2 mb-4">
+          {[
+            { label: "Total", value: data.summary.total_users, color: "text-slate-300" },
+            { label: "Active", value: data.summary.active_users, color: "text-emerald-400" },
+            { label: "Sessions", value: data.summary.total_sessions, color: "text-blue-400" },
+            { label: "Messages", value: data.summary.total_messages.toLocaleString(), color: "text-violet-400" },
+            { label: "Voice min", value: data.summary.total_voice_minutes, color: "text-cyan-400" },
+          ].map(({ label, value, color }) => (
+            <div key={label} className="rounded-xl border border-[#1f2937] bg-[#060c16] p-2.5 text-center">
+              <p className={`text-lg font-bold ${color}`}>{value}</p>
+              <p className="text-[10px] text-slate-600 mt-0.5">{label}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Filters */}
+      <div className="flex items-center gap-2 mb-3">
+        <input value={search} onChange={e => setSearch(e.target.value)}
+          placeholder="Search users..."
+          className="flex-1 rounded-lg border border-[#1f2937] bg-[#060c16] px-2.5 py-1.5 text-xs text-slate-300 placeholder-slate-600 focus:outline-none focus:border-blue-500/50" />
+        {tenants.length > 1 && (
+          <select value={tenantFilter} onChange={e => setTenantFilter(e.target.value)}
+            className="rounded-lg border border-[#1f2937] bg-[#060c16] px-2.5 py-1.5 text-xs text-slate-400 focus:outline-none focus:border-blue-500/50">
+            <option value="all">All Tenants</option>
+            {tenants.map(t => <option key={t} value={t}>{t}</option>)}
+          </select>
+        )}
+      </div>
+
+      {/* Table */}
+      {loading ? (
+        <div className="flex items-center justify-center py-10 text-slate-600">
+          <RefreshCw className="h-4 w-4 animate-spin mr-2" /> Loading...
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="py-10 text-center text-slate-600 text-xs">No users found</div>
+      ) : (
+        <div className="overflow-x-auto">
+          <table className="w-full text-[11px]">
+            <thead>
+              <tr className="border-b border-[#1f2937]">
+                {["User", "Tenant", "Role", "Chats", "Voice", "Messages", "Last Active"].map(h => (
+                  <th key={h} className="pb-2 pr-4 text-left font-mono uppercase tracking-wider text-slate-600">{h}</th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {filtered.map(u => (
+                <tr key={u.user_id} className="border-b border-[#0f1827] hover:bg-[#0a1120] transition-colors">
+                  <td className="py-2 pr-4">
+                    <div>
+                      <p className="text-slate-200 font-medium">{u.username}</p>
+                      <p className="text-slate-600 text-[10px]">{u.email}</p>
+                    </div>
+                  </td>
+                  <td className="py-2 pr-4">
+                    <span className="rounded-full border border-amber-500/20 bg-amber-500/5 px-1.5 py-0.5 text-amber-400 font-mono text-[10px]">
+                      {u.tenant_id}
+                    </span>
+                  </td>
+                  <td className="py-2 pr-4">
+                    <span className={`rounded-full border px-1.5 py-0.5 text-[10px] ${
+                      u.role === "admin"
+                        ? "border-violet-500/20 bg-violet-500/10 text-violet-400"
+                        : "border-blue-500/20 bg-blue-500/10 text-blue-400"}`}>
+                      {u.role}
+                    </span>
+                  </td>
+                  <td className="py-2 pr-4 text-slate-300">{u.total_chat_sessions}</td>
+                  <td className="py-2 pr-4 text-slate-300">{u.total_voice_minutes}m</td>
+                  <td className="py-2 pr-4 text-slate-300">{u.total_messages.toLocaleString()}</td>
+                  <td className="py-2 pr-4 text-slate-600">
+                    {u.last_active ? new Date(u.last_active).toLocaleDateString() : "—"}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
 }
 
 const STATUS_CONFIG = {
@@ -458,6 +611,9 @@ function MonitoringContent() {
             )}
           </div>
         </div>
+
+        {/* User Stats Panel */}
+        <UserStatsPanel />
 
         {/* RBAC matrix */}
         <div className="rounded-2xl border border-[#1f2937] bg-[#0c111d] p-5">
