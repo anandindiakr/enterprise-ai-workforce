@@ -3,11 +3,12 @@
 import { useEffect, useState, useCallback } from "react";
 import { authHeaders } from "@/lib/auth";
 import AdminGuard from "@/components/AdminGuard";
+import BillingDrawer from "@/components/BillingDrawer";
 import {
   Building2, Plus, Pencil, Trash2, Users, MessageSquare,
   CheckCircle, XCircle, Clock, RefreshCw, ChevronRight,
   Crown, Zap, Sparkles, Shield, BarChart3, X, Save,
-  AlertTriangle, ArrowUpRight,
+  AlertTriangle, ArrowUpRight, CreditCard,
 } from "lucide-react";
 
 const API = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
@@ -193,11 +194,12 @@ function TenantModal({ tenant, onClose, onSaved }: {
   );
 }
 
-function TenantCard({ tenant, onEdit, onDelete, onViewStats }: {
+function TenantCard({ tenant, onEdit, onDelete, onViewStats, onBilling }: {
   tenant: Tenant;
   onEdit: () => void;
   onDelete: () => void;
   onViewStats: () => void;
+  onBilling: () => void;
 }) {
   const PlanIcon = PLAN_ICONS[tenant.plan] ?? Zap;
   const planCls = PLAN_COLORS[tenant.plan] ?? PLAN_COLORS.starter;
@@ -216,6 +218,10 @@ function TenantCard({ tenant, onEdit, onDelete, onViewStats }: {
           </div>
         </div>
         <div className="flex gap-1.5 flex-shrink-0">
+          <button onClick={onBilling} title="Billing"
+            className="rounded p-1.5 text-slate-500 hover:text-emerald-400 hover:bg-emerald-500/10 transition-all">
+            <CreditCard className="h-3.5 w-3.5" />
+          </button>
           <button onClick={onViewStats} title="View stats"
             className="rounded p-1.5 text-slate-500 hover:text-blue-400 hover:bg-blue-500/10 transition-all">
             <BarChart3 className="h-3.5 w-3.5" />
@@ -330,6 +336,7 @@ function TenantsContent() {
   const [loading, setLoading] = useState(true);
   const [modalTenant, setModalTenant] = useState<Partial<Tenant> | null | false>(false);
   const [statsSlug, setStatsSlug] = useState<string | null>(null);
+  const [billingTenant, setBillingTenant] = useState<Tenant | null>(null);
   const [search, setSearch] = useState("");
   const [planFilter, setPlanFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -455,6 +462,7 @@ function TenantsContent() {
                 onEdit={() => setModalTenant(t)}
                 onDelete={() => handleDelete(t.slug)}
                 onViewStats={() => setStatsSlug(t.slug)}
+                onBilling={() => setBillingTenant(t)}
               />
             ))}
           </div>
@@ -502,6 +510,13 @@ function TenantsContent() {
         />
       )}
       {statsSlug && <TenantStatsDrawer slug={statsSlug} onClose={() => setStatsSlug(null)} />}
+      {billingTenant && (
+        <BillingDrawer
+          slug={billingTenant.slug}
+          tenantName={billingTenant.name}
+          onClose={() => setBillingTenant(null)}
+        />
+      )}
     </div>
   );
 }

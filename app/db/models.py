@@ -192,6 +192,64 @@ class SystemAlertModel(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
 
 
+class BillingSubscriptionModel(Base):
+    """Billing subscription per tenant — Stripe-ready, works without Stripe too."""
+    __tablename__ = "billing_subscriptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(_UUID, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[str] = mapped_column(String(64), unique=True, nullable=False, index=True)
+    # Stripe fields (all optional — populated when Stripe is connected)
+    stripe_customer_id: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
+    stripe_subscription_id: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
+    stripe_price_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    # Subscription state
+    plan: Mapped[str] = mapped_column(String(32), default="free", nullable=False)
+    status: Mapped[str] = mapped_column(String(32), default="active", nullable=False, index=True)
+    # active | trialing | past_due | canceled | unpaid | paused
+    billing_cycle: Mapped[str] = mapped_column(String(16), default="monthly", nullable=False)
+    # monthly | annual
+    currency: Mapped[str] = mapped_column(String(8), default="usd", nullable=False)
+    amount_cents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    # 0 for free plan; amount in cents (e.g. 4900 = $49.00)
+    current_period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    current_period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    trial_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    canceled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    cancel_at_period_end: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
+    metadata_: Mapped[dict] = mapped_column("metadata", _JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class BillingInvoiceModel(Base):
+    """Invoice records per tenant — synced from Stripe or created manually."""
+    __tablename__ = "billing_invoices"
+
+    id: Mapped[uuid.UUID] = mapped_column(_UUID, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    stripe_invoice_id: Mapped[str | None] = mapped_column(String(128), nullable=True, unique=True)
+    invoice_number: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    # e.g. INV-2024-001
+    status: Mapped[str] = mapped_column(String(32), default="draft", nullable=False, index=True)
+    # draft | open | paid | void | uncollectible
+    amount_due_cents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    amount_paid_cents: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), default="usd", nullable=False)
+    period_start: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    period_end: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    due_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    paid_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    description: Mapped[str | None] = mapped_column(Text, nullable=True)
+    line_items: Mapped[list] = mapped_column(_JSONB, default=list, nullable=False)
+    # [{"description": "Pro plan", "amount_cents": 4900, "quantity": 1}]
+    pdf_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    hosted_invoice_url: Mapped[str | None] = mapped_column(String(512), nullable=True)
+    notes: Mapped[str | None] = mapped_column(Text, nullable=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", _JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
 class KnowledgeDocumentModel(Base):
     __tablename__ = "knowledge_documents"
 

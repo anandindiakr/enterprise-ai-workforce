@@ -286,15 +286,15 @@ export default function DashboardPage() {
               <Zap className="h-4 w-4 text-amber-400" />
             </div>
             <div>
-              <p className="text-xs font-semibold text-slate-300">Swarms Orchestration</p>
-              <p className="text-[11px] text-slate-500">HierarchicalSwarm + SwarmRouter</p>
+              <p className="text-xs font-semibold text-slate-300">AI Workforce Platform</p>
+              <p className="text-[11px] text-slate-500">Enterprise Multi-Agent Orchestration</p>
             </div>
           </div>
 
           {[
-            { label: "Memory", value: "Redis + ChromaDB" },
-            { label: "Voice Stack", value: "LiveKit · Deepgram · ElevenLabs" },
-            { label: "MCP Tools", value: "CRM · HRIS · ERP · DevOps" },
+            { label: "AI Capabilities", value: "Chat · Voice · Workflows · Automation" },
+            { label: "Integrations",    value: "CRM · HRIS · ERP · DevOps · Analytics" },
+            { label: "Security",        value: "RBAC · Audit Logs · Tenant Isolation" },
           ].map((item) => (
             <div key={item.label}>
               <p className="text-[10px] font-mono uppercase tracking-wider text-slate-600">
