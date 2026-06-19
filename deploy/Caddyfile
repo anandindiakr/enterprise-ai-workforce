@@ -1,0 +1,30 @@
+# AlgoWorkforce — Caddyfile
+# Caddy auto-obtains and renews SSL certs from Let's Encrypt.
+# Proxies /api/* and /ws/* to FastAPI; everything else to Next.js.
+
+www.algoworkforce.com, algoworkforce.com {
+
+    # ── WebSocket & API routes → FastAPI ────────────────────────────────
+    handle /api/* {
+        reverse_proxy api:8000
+    }
+
+    handle /ws/* {
+        reverse_proxy api:8000 {
+            transport http {
+                versions h1
+            }
+        }
+    }
+
+    # ── Everything else → Next.js frontend ──────────────────────────────
+    handle {
+        reverse_proxy frontend:3000
+    }
+
+    # ── Logging ─────────────────────────────────────────────────────────
+    log {
+        output stdout
+        format console
+    }
+}

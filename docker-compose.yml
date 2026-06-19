@@ -150,7 +150,25 @@ services:
       - api
     restart: unless-stopped
 
+  # ── Caddy — reverse proxy + automatic HTTPS ────────────────────────────────
+  caddy:
+    image: caddy:2-alpine
+    container_name: ai-workforce-caddy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./deploy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - api
+      - frontend
+    restart: unless-stopped
+
 volumes:
   redis_data:
   chroma_data:
   postgres_data:
+  caddy_data:
+  caddy_config:
