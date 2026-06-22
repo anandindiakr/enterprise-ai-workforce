@@ -256,7 +256,23 @@ async def tenant_stats(
         select(TenantModel).where(TenantModel.slug == tenant_slug)
     )).scalar_one_or_none()
     if not row:
-        raise HTTPException(status_code=404, detail="Tenant not found")
+        # Auto-seed the default tenant on first access rather than 404-ing
+        if tenant_slug == "default":
+            row = TenantModel(
+                slug="default",
+                name="AlgoWorkforce",
+                admin_email="admin@workforce.local",
+                plan="enterprise",
+                status="active",
+                max_users=100,
+                max_chat_sessions=10000,
+                max_voice_minutes=6000,
+            )
+            db.add(row)
+            await db.commit()
+            await db.refresh(row)
+        else:
+            raise HTTPException(status_code=404, detail="Tenant not found")
 
     # User counts
     user_counts = await db.execute(
