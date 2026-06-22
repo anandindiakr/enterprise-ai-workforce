@@ -9,16 +9,12 @@ from datetime import datetime, timedelta, timezone
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
 from sqlalchemy.ext.asyncio import AsyncSession
-from slowapi import Limiter
-from slowapi.util import get_remote_address as _remote_addr
 
 from app.db.session import get_db
 from app.db import crud
 from app.db.models import UserModel
 from app.models.schemas import Principal, TokenRequest, TokenResponse
 from app.security.auth import create_access_token, get_principal, require_admin
-
-_login_limiter = Limiter(key_func=_remote_addr)
 
 # In-memory password-reset token store (Redis-backed in production, simple dict for now)
 _reset_tokens: dict[str, tuple[str, datetime]] = {}  # token -> (username, expiry)
@@ -128,7 +124,6 @@ class ResetPasswordRequest(BaseModel):
 # ── Auth endpoints ────────────────────────────────────────────────────────────
 
 @router.post("/token", response_model=TokenResponse)
-@_login_limiter.limit("10/minute")
 async def login(
     request: Request,
     payload: TokenRequest,
