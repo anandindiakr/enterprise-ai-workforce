@@ -145,10 +145,16 @@ export default function PortalPage() {
         fetch(`${API}/api/v1/tenants/${tenantSlug}/stats`, { headers: authHeaders() }),
         fetch(`${API}/api/v1/knowledge/stats`, { headers: authHeaders() }),
       ]);
-      if (!statsRes.ok) throw new Error(`Stats error ${statsRes.status}`);
-      const [s, k] = await Promise.all([statsRes.json(), kbRes.ok ? kbRes.json() : null]);
-      setStats(s as UsageStats);
-      if (k) setKbStats(k as KBStats);
+      // Treat 404 as "no data yet" rather than a hard error
+      if (!statsRes.ok && statsRes.status !== 404) throw new Error(`Stats error ${statsRes.status}`);
+      if (statsRes.ok) {
+        const s = await statsRes.json();
+        setStats(s as UsageStats);
+      }
+      if (kbRes.ok) {
+        const k = await kbRes.json();
+        setKbStats(k as KBStats);
+      }
     } catch (e) {
       setError(e instanceof Error ? e.message : "Failed to load dashboard");
     } finally {
@@ -195,6 +201,52 @@ export default function PortalPage() {
     );
   }
 
+  // If stats haven't loaded yet (no error, just 404 on first visit before auto-seed ran)
+  // show a minimal welcome card instead of crashing
+  if (!stats && !error) {
+    return (
+      <div className="p-6 max-w-6xl mx-auto text-slate-100 space-y-6">
+        <div className="flex items-center gap-3">
+          <div className="p-2.5 rounded-xl bg-violet-500/15 border border-violet-500/30">
+            <Building2 className="h-6 w-6 text-violet-400" />
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-white">My Portal</h1>
+            <p className="text-sm text-slate-400 mt-0.5">
+              Welcome, <span className="text-slate-300">{user?.full_name ?? user?.username ?? "User"}</span>
+            </p>
+          </div>
+        </div>
+        <div className="rounded-xl border border-slate-700 bg-slate-800/60 p-6 text-center space-y-3">
+          <Sparkles className="h-8 w-8 text-violet-400 mx-auto" />
+          <p className="text-slate-300 font-medium">Setting up your workspace…</p>
+          <p className="text-slate-500 text-sm">Your tenant profile is being initialised. Please refresh in a moment.</p>
+          <button onClick={() => fetchStats()} className="px-4 py-2 rounded-lg bg-violet-600 text-white text-sm hover:bg-violet-500">
+            Refresh Now
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="p-6 max-w-6xl mx-auto">
+        <div className="rounded-xl border border-red-500/30 bg-red-500/10 p-6 text-center">
+          <AlertTriangle className="h-8 w-8 text-red-400 mx-auto mb-2" />
+          <p className="text-red-300 font-medium">{error}</p>
+          <button
+            onClick={() => fetchStats()}
+            className="mt-4 px-4 py-2 rounded-lg bg-red-600 text-white text-sm hover:bg-red-700"
+          >
+            Retry
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // After the guards above, stats is guaranteed non-null
   const u = stats!.usage;
   const t = stats!.tenant;
 

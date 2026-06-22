@@ -141,19 +141,26 @@ export default function AdminDashboardPage() {
 
   const load = useCallback(async () => {
     const [uR, eR, hR, kR, tR] = await Promise.allSettled([
-      fetch(`${API}/api/v1/users/?limit=100`,    { headers: authHeaders() }),
+      fetch(`${API}/api/v1/users/?limit=100`,      { headers: authHeaders() }),
       fetch(`${API}/api/v1/escalations/?limit=10`, { headers: authHeaders() }),
-      fetch(`${API}/api/v1/monitor/health`,       { headers: authHeaders() }),
-      fetch(`${API}/api/v1/knowledge/stats`,      { headers: authHeaders() }),
-      fetch(`${API}/api/v1/tenants/?limit=100`,   { headers: authHeaders() }),
+      fetch(`${API}/api/v1/system/stats`,          { headers: authHeaders() }),
+      fetch(`${API}/api/v1/knowledge/stats`,       { headers: authHeaders() }),
+      fetch(`${API}/api/v1/tenants/?limit=100`,    { headers: authHeaders() }),
     ]);
 
     if (uR.status === "fulfilled" && uR.value.ok)
       setUsers(extractList<UserRecord>(await safeJson(uR.value, {})));
     if (eR.status === "fulfilled" && eR.value.ok)
       setEscs(extractList<EscRecord>(await safeJson(eR.value, {})));
-    if (hR.status === "fulfilled" && hR.value.ok)
-      setHealth(await safeJson<SystemHealth | null>(hR.value, null));
+    if (hR.status === "fulfilled" && hR.value.ok) {
+      const raw = await safeJson<Record<string, unknown>>(hR.value, {});
+      // /api/v1/system/stats returns {services:[{name,status,...}],...}
+      // Normalise into the {services: Record<string,SvcStatus>} shape
+      const svcArray = (raw.services ?? []) as { name: string; status: string; latency_ms?: number; details?: string }[];
+      const svcMap: Record<string, SvcStatus> = {};
+      for (const s of svcArray) svcMap[s.name] = { status: s.status, latency_ms: s.latency_ms };
+      setHealth({ status: raw.status as string ?? "ok", services: svcMap });
+    }
     if (kR.status === "fulfilled" && kR.value.ok)
       setKb(await safeJson<KBStats | null>(kR.value, null));
     if (tR.status === "fulfilled" && tR.value.ok)
@@ -168,7 +175,6 @@ export default function AdminDashboardPage() {
     setRefreshing(true);
     load().finally(() => setRefreshing(false));
   }, [load]);
-
   // Derived
   const activeUsers  = users.filter((u) => u.is_active).length;
   const adminCount   = users.filter((u) => u.roles?.includes("admin")).length;
