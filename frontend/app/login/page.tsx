@@ -53,7 +53,7 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="flex h-full w-full items-center justify-center bg-[#030712]">
+    <div className="flex min-h-screen w-full items-center justify-center bg-[#030712] px-4 py-8">
       <div className="w-full max-w-sm">
         {/* Logo */}
         <div className="mb-8 flex flex-col items-center gap-3">
@@ -87,6 +87,10 @@ export default function LoginPage() {
                 onChange={(e) => setUsername(e.target.value)}
                 required
                 autoComplete="username"
+                autoCorrect="off"
+                autoCapitalize="none"
+                spellCheck={false}
+                inputMode="text"
                 className="w-full rounded-lg border border-[#1f2937] bg-[#070d1a] px-3.5 py-2.5 text-sm text-slate-200 outline-none placeholder:text-slate-600 focus:border-amber-500/50 focus:ring-1 focus:ring-amber-500/25 transition-colors"
                 placeholder="admin"
               />
