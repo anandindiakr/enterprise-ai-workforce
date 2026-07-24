@@ -1,4 +1,6 @@
-FROM debian:bookworm-slim
+FROM debian:bullseye-slim
+# NOTE: Debian removed the `asterisk` package starting with bookworm;
+# bullseye still ships it, so pin the base image here.
 
 RUN apt-get update && \
     apt-get install -y --no-install-recommends \
