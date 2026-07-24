@@ -50,6 +50,10 @@ export default function OnboardingWizard() {
   const [greeting, setGreeting] = useState("");
   const [closing, setClosing] = useState("");
   const [transferMsg, setTransferMsg] = useState("");
+  // Full agent_overrides object as last loaded from the server, so saving the
+  // reception script doesn't wipe out any other department's scripts that
+  // were configured separately (e.g. from Settings).
+  const [existingOverrides, setExistingOverrides] = useState<Record<string, unknown>>({});
 
   const loadExisting = useCallback(async () => {
     try {
@@ -59,6 +63,7 @@ export default function OnboardingWizard() {
       setCompanyName(d.company_name || "");
       setTagline(d.company_tagline || "");
       setWebsite(d.company_website || "");
+      setExistingOverrides(d.agent_overrides || {});
       const rec = d.agent_overrides?.reception;
       if (rec) {
         setGreeting(rec.greeting || "");
@@ -73,15 +78,23 @@ export default function OnboardingWizard() {
   const goNext = () => setStep((s) => Math.min(s + 1, STEPS.length - 1));
   const goBack = () => setStep((s) => Math.max(s - 1, 0));
 
+  // Persists whatever is currently typed for the Company Info step.
+  // Returns true on success so callers (Next / Skip) can decide what to do.
+  async function persistCompanyInfo(): Promise<boolean> {
+    if (!companyName.trim() && !tagline.trim() && !website.trim()) return true; // nothing to save
+    const res = await fetch(`${API}/api/v1/settings/company`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ company_name: companyName, company_tagline: tagline, company_website: website }),
+    });
+    return res.ok;
+  }
+
   async function saveCompanyInfo() {
     setSaving(true); setError("");
     try {
-      const res = await fetch(`${API}/api/v1/settings/company`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({ company_name: companyName, company_tagline: tagline, company_website: website }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const ok = await persistCompanyInfo();
+      if (!ok) throw new Error("Failed to save");
       goNext();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to save company info");
@@ -100,19 +113,34 @@ export default function OnboardingWizard() {
     setProducts((prev) => prev.filter((_, idx) => idx !== i));
   }
 
+  // Persists any products currently in the list (including one still typed
+  // into the add-product fields but not yet clicked "Add" -- so Skip never
+  // silently drops a product the user was in the middle of entering).
+  async function persistProducts(): Promise<boolean> {
+    const pending = [...products];
+    if (pName.trim()) {
+      pending.push({ name: pName.trim(), description: pDesc.trim(), price: pPrice.trim() });
+    }
+    if (pending.length === 0) return true; // nothing to save
+    let saved = 0;
+    let ok = true;
+    for (const p of pending) {
+      const res = await fetch(`${API}/api/v1/products`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ name: p.name, description: p.description, price: p.price || null, category: "General", is_active: true }),
+      });
+      if (res.ok) saved += 1; else ok = false;
+    }
+    setProductsSaved(saved);
+    return ok;
+  }
+
   async function saveProductsAndNext() {
     setSaving(true); setError("");
     try {
-      let saved = 0;
-      for (const p of products) {
-        const res = await fetch(`${API}/api/v1/products`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json", ...authHeaders() },
-          body: JSON.stringify({ name: p.name, description: p.description, price: p.price || null, category: "General", is_active: true }),
-        });
-        if (res.ok) saved += 1;
-      }
-      setProductsSaved(saved);
+      const ok = await persistProducts();
+      if (!ok) throw new Error("Some products failed to save");
       goNext();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to save products");
@@ -121,20 +149,32 @@ export default function OnboardingWizard() {
     }
   }
 
+  // Persists the reception script fields, merged into whatever other
+  // departments' overrides already existed -- never replaces the whole
+  // agent_overrides object, so other departments' scripts survive.
+  async function persistScripts(): Promise<boolean> {
+    if (!greeting.trim() && !closing.trim() && !transferMsg.trim()) return true; // nothing to save
+    const merged = {
+      ...existingOverrides,
+      reception: { display_name: "", greeting, closing, transfer_message: transferMsg, script: "" },
+    };
+    const res = await fetch(`${API}/api/v1/settings/company`, {
+      method: "PUT",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({
+        company_name: companyName, company_tagline: tagline, company_website: website,
+        agent_overrides: merged,
+      }),
+    });
+    if (res.ok) setExistingOverrides(merged);
+    return res.ok;
+  }
+
   async function saveScriptsAndNext() {
     setSaving(true); setError("");
     try {
-      const res = await fetch(`${API}/api/v1/settings/company`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json", ...authHeaders() },
-        body: JSON.stringify({
-          company_name: companyName, company_tagline: tagline, company_website: website,
-          agent_overrides: {
-            reception: { display_name: "", greeting, closing, transfer_message: transferMsg, script: "" },
-          },
-        }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const ok = await persistScripts();
+      if (!ok) throw new Error("Failed to save");
       goNext();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to save call scripts");
@@ -158,9 +198,20 @@ export default function OnboardingWizard() {
     }
   }
 
-  function skipStep() {
+  async function skipStep() {
     if (step === STEPS.length - 1) { finishOnboarding(); return; }
-    goNext();
+    setSaving(true); setError("");
+    try {
+      if (step === 0) await persistCompanyInfo();
+      else if (step === 1) await persistProducts();
+      else if (step === 2) await persistScripts();
+      // Best-effort: even if a persist call fails, still let the user move on
+      // rather than trapping them on this step -- but the current values
+      // remain in local state so they can retry via "Next" later.
+    } finally {
+      setSaving(false);
+      goNext();
+    }
   }
 
   const inputCls = "w-full rounded-lg border border-[#1f2937] bg-[#070d1a] px-3 py-2 text-sm text-slate-300 placeholder-slate-600 focus:border-amber-500/50 focus:outline-none";

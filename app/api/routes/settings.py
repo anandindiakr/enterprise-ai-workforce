@@ -203,7 +203,11 @@ class CompanySettingsBody(BaseModel):
     greeting_script: str = ""
     # Per-department overrides keyed by department slug
     # e.g. {"sales": {"display_name": "Alex", "greeting": "Hi, I'm Alex..."}}
-    agent_overrides: dict[str, AgentOverride] = {}
+    # IMPORTANT: default is None (not {}) so that callers who only want to
+    # update company_name/tagline/website (e.g. the onboarding wizard's
+    # step-by-step saves) don't accidentally wipe out previously saved
+    # per-department scripts by omitting this field entirely.
+    agent_overrides: dict[str, AgentOverride] | None = None
     onboarding_complete: bool | None = None
 
 
@@ -234,7 +238,13 @@ async def update_company_config(
     principal: Principal = Depends(require_admin),
 ):
     """Update company branding and per-agent persona scripts (admin only)."""
-    overrides_dict = {k: v.model_dump() for k, v in body.agent_overrides.items()}
+    # None means "not provided" -- leave existing per-department scripts
+    # untouched. Only replace when the caller explicitly sends a dict
+    # (even an empty one, which means "clear all overrides").
+    overrides_dict = (
+        {k: v.model_dump() for k, v in body.agent_overrides.items()}
+        if body.agent_overrides is not None else None
+    )
     row = await upsert_company_settings(
         db,
         tenant_id=principal.tenant_id or "default",
@@ -242,7 +252,7 @@ async def update_company_config(
         company_tagline=body.company_tagline if body.company_tagline is not None else None,
         company_website=body.company_website if body.company_website is not None else None,
         greeting_script=body.greeting_script if body.greeting_script is not None else None,
-        agent_overrides=overrides_dict if overrides_dict is not None else None,
+        agent_overrides=overrides_dict,
         onboarding_complete=body.onboarding_complete,
         updated_by=principal.user_id,
     )
