@@ -37,14 +37,20 @@ RUN ./configure --with-pjproject-bundled --with-jansson-bundled && \
     make samples && \
     ldconfig
 
-# Drop build toolchain to shrink the image; runtime shared libs (libssl,
-# libsrtp2, libjansson, etc.) stay installed since they're still "depended
-# on" package-wise, not dev-only headers.
+# Drop build toolchain to shrink the image. NOTE: `--auto-remove` on the
+# -dev packages also strips their runtime .so counterparts (they were only
+# "auto-installed" as -dev dependencies), so explicitly reinstall the
+# runtime libs the compiled `asterisk` binary and modules link against.
 RUN apt-get purge -y --auto-remove build-essential wget pkg-config \
         libxml2-dev libsqlite3-dev uuid-dev libjansson-dev libedit-dev \
         libssl-dev libsrtp2-dev libncurses5-dev libnewt-dev subversion \
         git patch xz-utils && \
-    rm -rf /usr/src/asterisk /var/lib/apt/lists/*
+    rm -rf /usr/src/asterisk /var/lib/apt/lists/* && \
+    apt-get update && \
+    apt-get install -y --no-install-recommends \
+        libxml2 libsqlite3-0 uuid-runtime libjansson4 libedit2 \
+        libssl1.1 libsrtp2-1 libncurses5 libnewt0.52 && \
+    rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r asterisk && useradd -r -g asterisk -d /var/lib/asterisk asterisk && \
     mkdir -p /var/log/asterisk /var/run/asterisk && \
