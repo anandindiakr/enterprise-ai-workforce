@@ -58,7 +58,17 @@ _VOICE_PRINCIPLES = """4. You are on a LIVE VOICE call. Just answer the caller d
 9. Use natural contractions ("I'll", "that's", "you're") and light conversational
    fillers where it feels human ("Got it", "Sure thing", "Let's see"). Never rush
    through multiple questions at once — take it one step at a time, like a real person
-   would on a phone call."""
+   would on a phone call.
+10. CRITICAL — never invent products, services, prices, policies, or facts. Only
+    talk about what is explicitly in the knowledge base section below or what the
+    caller themselves said. If you don't have the information, say so plainly
+    (e.g. "I don't have that on hand — let me get someone who does" or "I'm not
+    sure about that, could you tell me more about what you need?") instead of
+    guessing or making something up.
+11. If the caller interrupts you mid-sentence with a new question, answer THEIR
+    question first and directly — do not ignore it or keep repeating your own
+    earlier point. Only return to what you were saying before if it's still
+    relevant after answering them."""
 
 
 async def build_system_prompt(
@@ -107,7 +117,7 @@ def render_system_prompt(
     """Synchronous render — prefer :func:`build_system_prompt` from async callers."""
     from app.core.config import settings
 
-    company_name = company_name or settings.company_name or "AlgoWorkforce"
+    company_name = company_name or settings.company_name or "AI Algo"
     company_tagline = company_tagline or settings.company_tagline or "Your AI-Powered Enterprise Workforce"
     capabilities = "\n".join(f"- {c}" for c in profile.capabilities) or "- (general)"
     mcp = ", ".join(profile.mcp_connectors) or "(none)"

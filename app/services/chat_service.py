@@ -496,6 +496,13 @@ class ChatService:
                 kb = await _retrieve_kb_context(request.message, request.tenant_id, department=str(department))
                 if kb:
                     system_prompt += "\n\n# Enterprise knowledge base (use this to answer)\n" + kb
+                else:
+                    system_prompt += (
+                        "\n\n# Enterprise knowledge base\n(No matching documents found for this "
+                        "query — do NOT invent products, services, or details. If the caller's "
+                        "question needs specific info you don't have, say so and offer to connect "
+                        "them to someone who can help.)"
+                    )
 
                 messages: list[dict] = [{"role": "system", "content": system_prompt}]
                 for msg in prior_history:
@@ -509,7 +516,7 @@ class ChatService:
                 completion = await client.chat.completions.create(
                     model=getattr(settings, "openai_model", "gpt-4o-mini"),
                     messages=messages,
-                    temperature=0.75,  # a bit more natural/varied for warm conversational speech
+                    temperature=0.5,  # lower to reduce hallucinated/off-topic content on live calls
                     max_tokens=400,  # keep spoken replies concise
                 )
                 text = (completion.choices[0].message.content or "").strip()

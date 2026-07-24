@@ -127,7 +127,7 @@ class CompanySettingsModel(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(_UUID, primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[str] = mapped_column(String(64), default="default", nullable=False, unique=True, index=True)
-    company_name: Mapped[str] = mapped_column(String(255), default="AlgoWorkforce", nullable=False)
+    company_name: Mapped[str] = mapped_column(String(255), default="AI Algo", nullable=False)
     company_tagline: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     company_website: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     greeting_script: Mapped[str] = mapped_column(Text, default="", nullable=False)

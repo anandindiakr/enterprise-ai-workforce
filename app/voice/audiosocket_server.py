@@ -48,8 +48,9 @@ _SILENCE_FLUSH_SECS: Final[float] = 1.0
 _MAX_BUFFER_BYTES:   Final[int]   = 8_000 * 2 * 8  # 8 s of slin8k PCM16
 _FRAME_BYTES:        Final[int]   = 320             # 20 ms @ 8 kHz * 2 bytes
 _GREETING = (
-    "Hi there, thanks so much for calling! I'm your AI assistant — how can I help you today?"
+    "Thank you for calling AI Algo, how can I assist you?"
 )
+_HOLD_PHRASE = "One moment, connecting you now."
 
 
 async def _read_frame(reader: asyncio.StreamReader) -> tuple[int, bytes]:
@@ -108,13 +109,35 @@ def _decode_to_slin8k(audio_bytes: bytes) -> bytes:
     if data.ndim > 1:
         data = data.mean(axis=1)
     if sr != 8_000 and len(data) > 1:
-        duration = len(data) / sr
-        target_len = max(int(duration * 8_000), 1)
-        x_old = np.linspace(0.0, duration, num=len(data), endpoint=False)
-        x_new = np.linspace(0.0, duration, num=target_len, endpoint=False)
-        data = np.interp(x_new, x_old, data)
+        data = _resample(data, sr, 8_000)
     pcm16 = np.clip(data * 32767.0, -32768, 32767).astype("<i2")
     return pcm16.tobytes()
+
+
+def _resample(data, sr: int, target_sr: int):
+    """Resample ``data`` from ``sr`` to ``target_sr``.
+
+    Prefers ``scipy.signal.resample_poly`` (polyphase filter — proper
+    band-limited resampling, no aliasing/noise) and falls back to plain
+    linear interpolation if scipy isn't installed. The previous linear-only
+    approach introduced audible noise/artifacts on the phone line.
+    """
+    import math
+
+    import numpy as np
+
+    try:
+        from scipy.signal import resample_poly
+
+        g = math.gcd(sr, target_sr)
+        up, down = target_sr // g, sr // g
+        return resample_poly(data, up, down).astype("float32")
+    except ImportError:
+        duration = len(data) / sr
+        target_len = max(int(duration * target_sr), 1)
+        x_old = np.linspace(0.0, duration, num=len(data), endpoint=False)
+        x_new = np.linspace(0.0, duration, num=target_len, endpoint=False)
+        return np.interp(x_new, x_old, data)
 
 
 async def _play_greeting(writer: asyncio.StreamWriter, lock: asyncio.Lock) -> None:
@@ -195,36 +218,25 @@ async def _process_utterance(
             pass
 
         label = _DEPT_LABELS.get(new_dept, new_dept.replace("_", " ").title())
-        handoff = chat_resp.message.content or f"Of course — connecting you to our {label} team now."
+        handoff = chat_resp.message.content or f"Of course — {_HOLD_PHRASE}"
 
         async with lock:
             if writer.is_closing():
                 return
+            # Speak immediately so there's never dead air while the transfer
+            # + follow-up LLM call are being prepared (previously the caller
+            # heard a few seconds of silence here).
             await _play_text(writer, handoff)
             if writer.is_closing():
                 return
             await _play_text(writer, _DEPT_INTROS.get(new_dept, f"Hi, this is {label}. How can I help you?"))
 
-        # Let the new department actually answer the caller's original
-        # question, instead of leaving them hanging after just the intro.
-        try:
-            followup = await chat_service().handle_fast(
-                ChatRequest(
-                    message=transcript,
-                    department=new_dept,
-                    session_id=session_id,
-                    user_id=user_id,
-                    tenant_id=tenant_id,
-                )
-            )
-            follow_text = (followup.message.content or "").strip()
-        except Exception as exc:  # noqa: BLE001
-            logger.warning("AudioSocket transfer follow-up failed: {}", exc)
-            follow_text = ""
-
-        if follow_text and not writer.is_closing():
-            async with lock:
-                await _play_text(writer, follow_text)
+        # Don't reuse the caller's original utterance (e.g. "transfer me to
+        # sales") as a question for the new department -- that caused the
+        # new agent to respond to the transfer request itself instead of
+        # naturally waiting for the caller's real question, and made it
+        # sound like a repeated/garbled greeting. Just let the dept intro
+        # above stand and wait for the caller's next utterance.
         return
 
     reply = chat_resp.message.content or "I'm sorry, could you repeat that?"

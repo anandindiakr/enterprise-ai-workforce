@@ -51,6 +51,7 @@ livekit-api>=0.7.0
 aiortc>=1.9.0
 numpy>=1.26.4
 soundfile>=0.12.1
+scipy>=1.11.0  # high-quality polyphase resampling for AudioSocket/SIP audio (avoids noise)
 
 # MCP
 mcp>=1.0.0

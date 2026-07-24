@@ -39,7 +39,7 @@ class AppSettings(BaseSettings):
 
     # --- Company branding (used by agent personas) ---
     # Set these in .env so every agent speaks on behalf of your organisation.
-    company_name: str = "AlgoWorkforce"
+    company_name: str = "AI Algo"
     company_tagline: str = "Your AI-Powered Enterprise Workforce"
     company_website: str = "https://www.algoworkforce.com"
     # Optional greeting script.  Use {agent_name} as a placeholder for the
