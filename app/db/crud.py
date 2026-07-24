@@ -17,6 +17,7 @@ from app.db.models import (
     AuditLogModel,
     KnowledgeDocumentModel,
     PlatformSecretModel,
+    ProductModel,
 )
 
 
@@ -452,6 +453,118 @@ async def list_knowledge_documents(
     result = await db.execute(q)
     return list(result.scalars().all())
 
+
+async def get_knowledge_document(db: AsyncSession, doc_id: uuid.UUID) -> KnowledgeDocumentModel | None:
+    return await db.get(KnowledgeDocumentModel, doc_id)
+
+
+async def delete_knowledge_document(db: AsyncSession, doc_id: uuid.UUID) -> bool:
+    doc = await db.get(KnowledgeDocumentModel, doc_id)
+    if doc is None:
+        return False
+    await db.delete(doc)
+    await db.flush()
+    return True
+
+
+# ---------------------------------------------------------------------------
+# Product / Service catalog CRUD
+# ---------------------------------------------------------------------------
+
+async def create_product(
+    db: AsyncSession,
+    *,
+    tenant_id: str,
+    name: str,
+    description: str = "",
+    category: str | None = None,
+    price: str | None = None,
+    sku: str | None = None,
+    is_active: bool = True,
+    knowledge_document_id: uuid.UUID | None = None,
+    created_by: str | None = None,
+    metadata: dict | None = None,
+) -> ProductModel:
+    product = ProductModel(
+        tenant_id=tenant_id,
+        name=name,
+        description=description,
+        category=category,
+        price=price,
+        sku=sku,
+        is_active=is_active,
+        knowledge_document_id=knowledge_document_id,
+        created_by=created_by,
+        metadata_=metadata or {},
+    )
+    db.add(product)
+    await db.flush()
+    await db.refresh(product)
+    return product
+
+
+async def list_products(
+    db: AsyncSession,
+    *,
+    tenant_id: str = "default",
+    category: str | None = None,
+    active_only: bool = False,
+    skip: int = 0,
+    limit: int = 200,
+) -> list[ProductModel]:
+    q = select(ProductModel).where(ProductModel.tenant_id == tenant_id)
+    if category:
+        q = q.where(ProductModel.category == category)
+    if active_only:
+        q = q.where(ProductModel.is_active == True)  # noqa: E712
+    q = q.order_by(ProductModel.created_at.desc()).offset(skip).limit(limit)
+    result = await db.execute(q)
+    return list(result.scalars().all())
+
+
+async def get_product(db: AsyncSession, product_id: uuid.UUID) -> ProductModel | None:
+    return await db.get(ProductModel, product_id)
+
+
+async def update_product(
+    db: AsyncSession,
+    product_id: uuid.UUID,
+    *,
+    name: str | None = None,
+    description: str | None = None,
+    category: str | None = None,
+    price: str | None = None,
+    sku: str | None = None,
+    is_active: bool | None = None,
+    knowledge_document_id: uuid.UUID | None = None,
+) -> ProductModel | None:
+    product = await db.get(ProductModel, product_id)
+    if product is None:
+        return None
+    if name        is not None: product.name        = name
+    if description is not None: product.description = description
+    if category     is not None: product.category    = category
+    if price        is not None: product.price       = price
+    if sku          is not None: product.sku         = sku
+    if is_active    is not None: product.is_active   = is_active
+    if knowledge_document_id is not None: product.knowledge_document_id = knowledge_document_id
+    product.updated_at = datetime.now(timezone.utc)
+    await db.flush()
+    await db.refresh(product)
+    return product
+
+
+async def delete_product(db: AsyncSession, product_id: uuid.UUID) -> ProductModel | None:
+    """Delete a product row and return it (caller uses knowledge_document_id
+    to clean up the linked KB entry before/after this call)."""
+    product = await db.get(ProductModel, product_id)
+    if product is None:
+        return None
+    await db.delete(product)
+    await db.flush()
+    return product
+
+
 # ---------------------------------------------------------------------------
 # Platform secrets (runtime API keys stored via Settings UI)
 # ---------------------------------------------------------------------------
@@ -525,6 +638,7 @@ async def upsert_company_settings(
     company_website: str | None = None,
     greeting_script: str | None = None,
     agent_overrides: dict | None = None,
+    onboarding_complete: bool | None = None,
     updated_by: str | None = None,
 ):
     """Create-or-update company settings and invalidate the in-process cache."""
@@ -534,6 +648,7 @@ async def upsert_company_settings(
     if company_website is not None: row.company_website = company_website
     if greeting_script is not None: row.greeting_script = greeting_script
     if agent_overrides is not None: row.agent_overrides = agent_overrides
+    if onboarding_complete is not None: row.onboarding_complete = onboarding_complete
     if updated_by      is not None: row.updated_by      = updated_by
     row.updated_at = datetime.now(timezone.utc)
     await db.flush()

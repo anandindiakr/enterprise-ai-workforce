@@ -9,9 +9,12 @@
 import { useEffect, useState } from "react";
 import { usePathname, useRouter } from "next/navigation";
 import { Loader2 } from "lucide-react";
+import { getUser } from "@/lib/auth";
 
 // Pages that don't require authentication
 export const PUBLIC_PATHS = ["/login", "/welcome"];
+
+const ONBOARDING_REDIRECT_FLAG = "workforce_onboarding_redirected";
 
 // Pages that should NOT show the sidebar (full-screen layouts)
 const NO_SIDEBAR_PATHS = ["/login", "/welcome"];
@@ -36,9 +39,28 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     const token = localStorage.getItem("workforce_token");
     if (!token) {
       router.replace("/welcome");
-    } else {
-      setChecking(false);
+      return;
     }
+    setChecking(false);
+
+    // One-time onboarding nudge: if an admin hasn't finished the setup
+    // wizard yet, send them there once per browser session. They can
+    // always "Skip for now" — this never hard-blocks daily use.
+    if (path === "/onboarding") return;
+    const user = getUser();
+    if (!user?.roles?.includes("admin")) return;
+    if (sessionStorage.getItem(ONBOARDING_REDIRECT_FLAG)) return;
+
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+    fetch(`${apiBase}/api/v1/settings/company`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (d && !d.onboarding_complete) {
+          sessionStorage.setItem(ONBOARDING_REDIRECT_FLAG, "1");
+          router.replace("/onboarding");
+        }
+      })
+      .catch(() => {});
   }, [path, router, isPublic]);
 
   /* Show a spinner while we check localStorage (avoids flash of protected content) */

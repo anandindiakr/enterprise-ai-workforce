@@ -184,6 +184,13 @@ from app.db.crud import get_company_settings, upsert_company_settings  # noqa: E
 
 class AgentOverride(BaseModel):
     display_name: str = ""
+    # New structured script fields (preferred). Each falls back to the legacy
+    # single `script` field at render time if left blank, so existing tenant
+    # data keeps working without any migration.
+    greeting: str = ""
+    closing: str = ""
+    transfer_message: str = ""
+    # Legacy single free-text field (kept for backward compatibility).
     script: str = ""
 
 
@@ -195,8 +202,9 @@ class CompanySettingsBody(BaseModel):
     # Placeholders: {agent_name}, {company_name}, {department}
     greeting_script: str = ""
     # Per-department overrides keyed by department slug
-    # e.g. {"sales": {"display_name": "Alex", "script": "Hello, I'm Alex..."}}
+    # e.g. {"sales": {"display_name": "Alex", "greeting": "Hi, I'm Alex..."}}
     agent_overrides: dict[str, AgentOverride] = {}
+    onboarding_complete: bool | None = None
 
 
 @router.get("/company")
@@ -213,6 +221,7 @@ async def get_company_config(
         "company_website": row.company_website,
         "greeting_script": row.greeting_script,
         "agent_overrides": row.agent_overrides,
+        "onboarding_complete": bool(getattr(row, "onboarding_complete", False)),
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
         "updated_by": row.updated_by,
     }
@@ -234,11 +243,33 @@ async def update_company_config(
         company_website=body.company_website if body.company_website is not None else None,
         greeting_script=body.greeting_script if body.greeting_script is not None else None,
         agent_overrides=overrides_dict if overrides_dict is not None else None,
+        onboarding_complete=body.onboarding_complete,
         updated_by=principal.user_id,
     )
     await db.commit()
     return {
         "saved": True,
         "company_name": row.company_name,
+        "onboarding_complete": bool(getattr(row, "onboarding_complete", False)),
         "updated_at": row.updated_at.isoformat() if row.updated_at else None,
     }
+
+
+@router.post("/onboarding/complete")
+async def complete_onboarding(
+    db: AsyncSession = Depends(get_db),
+    principal: Principal = Depends(require_admin),
+):
+    """Mark the onboarding wizard as done for this tenant (admin only).
+
+    Convenience endpoint so the frontend wizard doesn't need to resend the
+    full company settings payload just to flip one flag.
+    """
+    row = await upsert_company_settings(
+        db,
+        tenant_id=principal.tenant_id or "default",
+        onboarding_complete=True,
+        updated_by=principal.user_id,
+    )
+    await db.commit()
+    return {"onboarding_complete": True, "updated_at": row.updated_at.isoformat() if row.updated_at else None}

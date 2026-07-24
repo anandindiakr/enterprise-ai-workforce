@@ -91,7 +91,11 @@ async def build_system_prompt(
     dept_key = profile.department.value
     overrides = (branding.agent_overrides or {}).get(dept_key) or {}
     display_name_override = overrides.get("display_name") or None
-    custom_dept_script = (overrides.get("script") or "").strip()
+    # Prefer the new structured "greeting" field (Settings -> Call Scripts);
+    # fall back to the legacy free-text "script" field so tenants configured
+    # before this field existed keep working unchanged.
+    custom_dept_script = (overrides.get("greeting") or overrides.get("script") or "").strip()
+    closing_script = (overrides.get("closing") or "").strip()
 
     return render_system_prompt(
         profile,
@@ -100,6 +104,7 @@ async def build_system_prompt(
         company_name=branding.company_name,
         company_tagline=branding.company_tagline,
         greeting_script=custom_dept_script or branding.greeting_script,
+        closing_script=closing_script,
         display_name_override=display_name_override,
     )
 
@@ -112,6 +117,7 @@ def render_system_prompt(
     company_name: str | None = None,
     company_tagline: str | None = None,
     greeting_script: str | None = None,
+    closing_script: str | None = None,
     display_name_override: str | None = None,
 ) -> str:
     """Synchronous render — prefer :func:`build_system_prompt` from async callers."""
@@ -162,6 +168,21 @@ def render_system_prompt(
         display_name=display_name,
         company_name=company_name,
     )
+
+    closing_script = (closing_script or "").strip()
+    if closing_script:
+        try:
+            closing_line = closing_script.format(
+                agent_name=display_name, company_name=company_name,
+                department=profile.department.value,
+            )
+        except KeyError:
+            closing_line = closing_script
+        routing_principles += (
+            f'\n\nWhen the caller is done and the conversation is wrapping up, '
+            f'end with this closing line: "{closing_line}"'
+        )
+
     return _BASE_TEMPLATE.format(
         agent_name=profile.agent_name,
         display_name=display_name,

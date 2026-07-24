@@ -32,16 +32,20 @@ import {
   Lock,
   Building2,
   Shield,
+  PackagePlus,
+  Rocket,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { clearAuth, getUser, type AuthUser } from "@/lib/auth";
 
 const NAV = [
   { href: "/", icon: LayoutDashboard, label: "Dashboard" },
+  { href: "/onboarding", icon: Rocket, label: "Onboarding", adminOnly: true, badge: "Setup" },
   { href: "/chat", icon: MessageSquare, label: "Chat Console" },
   { href: "/voice", icon: Mic, label: "Voice Console" },
   { href: "/agents", icon: Brain, label: "Agents" },
   { href: "/workflows", icon: GitBranch, label: "Workflows" },
+  { href: "/products", icon: PackagePlus, label: "Products & Services", adminOnly: true },
   { href: "/analytics", icon: BarChart3, label: "Analytics" },
   { href: "/escalations", icon: AlertTriangle, label: "Escalations" },
   { href: "/knowledge", icon: BookOpen, label: "Knowledge Base" },
@@ -70,10 +74,22 @@ export function Sidebar() {
   const router   = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [onboardingDone, setOnboardingDone] = useState(true);
 
   /* Load user from localStorage on mount (client only) */
   useEffect(() => {
     setUser(getUser());
+  }, []);
+
+  /* Check onboarding status so we can show a "Setup" badge until complete */
+  useEffect(() => {
+    const token = localStorage.getItem("workforce_token");
+    if (!token) return;
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+    fetch(`${apiBase}/api/v1/settings/company`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d) setOnboardingDone(!!d.onboarding_complete); })
+      .catch(() => {});
   }, []);
 
   function handleLogout() {
@@ -115,8 +131,9 @@ export function Sidebar() {
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-[#1f2937]">
         {/* Main nav */}
         <nav className="space-y-1 px-2 pt-4">
-          {NAV.filter(({ adminOnly }) => !adminOnly || user?.roles?.includes("admin")).map(({ href, icon: Icon, label, adminOnly }) => {
+          {NAV.filter(({ adminOnly }) => !adminOnly || user?.roles?.includes("admin")).map(({ href, icon: Icon, label, adminOnly, badge }) => {
             const active = path === href;
+            const showBadge = badge && href === "/onboarding" && !onboardingDone;
             return (
               <Link
                 key={href}
@@ -134,7 +151,12 @@ export function Sidebar() {
                 {!collapsed && (
                   <>
                     <span className="flex-1">{label}</span>
-                    {adminOnly && <Lock className="h-2.5 w-2.5 flex-shrink-0 text-amber-600/50" />}
+                    {showBadge && (
+                      <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-semibold text-black">
+                        {badge}
+                      </span>
+                    )}
+                    {adminOnly && !showBadge && <Lock className="h-2.5 w-2.5 flex-shrink-0 text-amber-600/50" />}
                   </>
                 )}
               </Link>

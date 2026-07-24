@@ -140,9 +140,61 @@ def _resample(data, sr: int, target_sr: int):
         return np.interp(x_new, x_old, data)
 
 
-async def _play_greeting(writer: asyncio.StreamWriter, lock: asyncio.Lock) -> None:
+async def _get_branding(tenant_id: str = "default"):
+    """Fetch (cached) company branding so voice scripts reflect Settings UI edits."""
+    from app.core.company import get_company_branding
+
+    try:
+        return await get_company_branding(tenant_id)
+    except Exception:  # noqa: BLE001
+        return None
+
+
+def _dept_override(branding, department: str) -> dict:
+    if branding is None:
+        return {}
+    return (branding.agent_overrides or {}).get(department) or {}
+
+
+def _company_greeting(branding, department: str = "reception") -> str:
+    """Resolve the opening greeting for `department`, preferring the admin's
+    configured script (Settings -> Call Scripts) over the hardcoded default."""
+    override = _dept_override(branding, department)
+    custom = (override.get("greeting") or override.get("script") or "").strip()
+    if custom:
+        company_name = (branding.company_name if branding else None) or settings.company_name
+        try:
+            return custom.format(company_name=company_name, department=department)
+        except (KeyError, IndexError):
+            return custom
+    return _GREETING
+
+
+def _company_transfer_message(branding, department: str) -> str:
+    """Resolve the phrase spoken while transferring OUT of `department`."""
+    override = _dept_override(branding, department)
+    custom = (override.get("transfer_message") or "").strip()
+    return custom or _HOLD_PHRASE
+
+
+def _company_dept_intro(branding, department: str) -> str:
+    """Resolve the greeting spoken by the NEW department right after a transfer."""
+    override = _dept_override(branding, department)
+    custom = (override.get("greeting") or override.get("script") or "").strip()
+    if custom:
+        company_name = (branding.company_name if branding else None) or settings.company_name
+        try:
+            return custom.format(company_name=company_name, department=department)
+        except (KeyError, IndexError):
+            return custom
+    return _DEPT_INTROS.get(department, f"Hi, this is {_DEPT_LABELS.get(department, department.replace('_', ' ').title())}. How can I help you?")
+
+
+async def _play_greeting(writer: asyncio.StreamWriter, lock: asyncio.Lock, tenant_id: str = "default") -> None:
+    branding = await _get_branding(tenant_id)
+    greeting = _company_greeting(branding, "reception")
     async with lock:
-        await _play_text(writer, _GREETING)
+        await _play_text(writer, greeting)
 
 
 _DEPT_LABELS = {
@@ -217,8 +269,12 @@ async def _process_utterance(
         except Exception:  # noqa: BLE001
             pass
 
-        label = _DEPT_LABELS.get(new_dept, new_dept.replace("_", " ").title())
-        handoff = chat_resp.message.content or f"Of course — {_HOLD_PHRASE}"
+        branding = await _get_branding(tenant_id)
+        # Prefer the admin's configured transfer phrase (Settings -> Call
+        # Scripts) over raw LLM output -- the model can otherwise ad-lib or
+        # go silent here, which is what caused dead air / made-up chatter
+        # during a transfer on live calls.
+        handoff = _company_transfer_message(branding, dept)
 
         async with lock:
             if writer.is_closing():
@@ -229,7 +285,7 @@ async def _process_utterance(
             await _play_text(writer, handoff)
             if writer.is_closing():
                 return
-            await _play_text(writer, _DEPT_INTROS.get(new_dept, f"Hi, this is {label}. How can I help you?"))
+            await _play_text(writer, _company_dept_intro(branding, new_dept))
 
         # Don't reuse the caller's original utterance (e.g. "transfer me to
         # sales") as a question for the new department -- that caused the

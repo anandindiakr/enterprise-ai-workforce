@@ -105,7 +105,14 @@ const DEPARTMENTS = [
   { key: "marketing",     label: "Marketing",     emoji: "📢" },
 ];
 
-interface AgentOverride { display_name: string; script: string; }
+interface AgentOverride {
+  display_name: string;
+  greeting: string;
+  closing: string;
+  transfer_message: string;
+  script: string; // legacy free-text fallback
+}
+const EMPTY_OVERRIDE: AgentOverride = { display_name: "", greeting: "", closing: "", transfer_message: "", script: "" };
 
 function CompanyPanel({ apiBase }: { apiBase: string }) {
   const [companyName, setCompanyName]       = useState("");
@@ -133,7 +140,7 @@ function CompanyPanel({ apiBase }: { apiBase: string }) {
   const setOverride = (dept: string, field: keyof AgentOverride, val: string) => {
     setOverrides((prev) => ({
       ...prev,
-      [dept]: { ...(prev[dept] ?? { display_name: "", script: "" }), [field]: val },
+      [dept]: { ...EMPTY_OVERRIDE, ...(prev[dept] ?? {}), [field]: val },
     }));
   };
 
@@ -208,7 +215,13 @@ function CompanyPanel({ apiBase }: { apiBase: string }) {
         <h3 className="text-[11px] font-mono uppercase tracking-widest text-slate-600 mb-3">Per-Department Agent Scripts</h3>
         {DEPARTMENTS.map(({ key, label, emoji }) => {
           const open = expanded === key;
-          const ov   = overrides[key] ?? { display_name: "", script: "" };
+          const ov   = { ...EMPTY_OVERRIDE, ...(overrides[key] ?? {}) };
+          const previewName = companyName || "the company";
+          const previewAgent = ov.display_name || "the assistant";
+          const fill = (s: string) => s
+            .replaceAll("{agent_name}", previewAgent)
+            .replaceAll("{company_name}", previewName)
+            .replaceAll("{department}", label);
           return (
             <div key={key} className="rounded-lg border border-[#1f2937] overflow-hidden">
               <button
@@ -235,15 +248,47 @@ function CompanyPanel({ apiBase }: { apiBase: string }) {
                     <p className="mt-1 text-[10px] text-slate-600">Overrides the default name for this department only.</p>
                   </div>
                   <div>
-                    <label className="mb-1 block text-[11px] font-medium text-slate-500">Custom Greeting / Script</label>
-                    <textarea value={ov.script} onChange={(e) => setOverride(key, "script", e.target.value)}
-                      placeholder={`Hi, I'm {agent_name} from ${label}. How can I help?`}
+                    <label className="mb-1 block text-[11px] font-medium text-slate-500">Greeting (start of call)</label>
+                    <textarea value={ov.greeting} onChange={(e) => setOverride(key, "greeting", e.target.value)}
+                      placeholder={`e.g. "Thank you for calling {company_name}, this is {agent_name} from ${label}. How can I help you today?"`}
+                      className={textareaCls} />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-slate-500">Closing line (end of call)</label>
+                    <textarea value={ov.closing} onChange={(e) => setOverride(key, "closing", e.target.value)}
+                      placeholder={`e.g. "Thanks for calling {company_name}, have a great day!"`}
+                      className={textareaCls} />
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-[11px] font-medium text-slate-500">Transfer / escalation message</label>
+                    <textarea value={ov.transfer_message} onChange={(e) => setOverride(key, "transfer_message", e.target.value)}
+                      placeholder={`e.g. "Sure, let me connect you to our ${label} team now — one moment please."`}
                       className={textareaCls} />
                     <p className="mt-1 text-[10px] text-slate-600">
-                      This overrides the global greeting for the <strong className="text-slate-400">{label}</strong> department.
-                      Use <code className="text-amber-500/80">{"{agent_name}"}</code> and{" "}
-                      <code className="text-amber-500/80">{"{company_name}"}</code> as placeholders.
+                      Said to the caller right before transferring to this department, so there's no awkward silence.
                     </p>
+                  </div>
+                  <p className="text-[10px] text-slate-600">
+                    Placeholders: <code className="text-amber-500/80">{"{agent_name}"}</code>,{" "}
+                    <code className="text-amber-500/80">{"{company_name}"}</code>,{" "}
+                    <code className="text-amber-500/80">{"{department}"}</code>. Leave any field blank to fall back to the global greeting script above.
+                  </p>
+
+                  {/* Legacy field - kept for backward compatibility with existing data */}
+                  {ov.script && (
+                    <div className="rounded-lg border border-dashed border-[#1f2937] p-3">
+                      <label className="mb-1 block text-[11px] font-medium text-slate-500">Legacy single-field script (still in use if the fields above are blank)</label>
+                      <textarea value={ov.script} onChange={(e) => setOverride(key, "script", e.target.value)}
+                        className={textareaCls} />
+                    </div>
+                  )}
+
+                  {/* Test / preview */}
+                  <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 p-3 space-y-2">
+                    <p className="text-[11px] font-medium text-amber-400/90">Preview (with current company name substituted)</p>
+                    <p className="text-xs text-slate-300"><span className="text-slate-500">Greeting:</span> {ov.greeting ? fill(ov.greeting) : <span className="text-slate-600 italic">using global default</span>}</p>
+                    <p className="text-xs text-slate-300"><span className="text-slate-500">Closing:</span> {ov.closing ? fill(ov.closing) : <span className="text-slate-600 italic">using global default</span>}</p>
+                    <p className="text-xs text-slate-300"><span className="text-slate-500">Transfer:</span> {ov.transfer_message ? fill(ov.transfer_message) : <span className="text-slate-600 italic">using default transfer phrase</span>}</p>
                   </div>
                 </div>
               )}

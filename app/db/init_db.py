@@ -37,6 +37,11 @@ async def init_db() -> None:
     # (and thus the whole app). Convert ARRAY columns to JSON idempotently.
     await _migrate_user_array_columns_to_json()
 
+    # ``create_all`` never adds columns to already-existing tables either, so
+    # new columns added to CompanySettingsModel after go-live need an explicit
+    # idempotent ALTER TABLE here.
+    await _add_missing_column("company_settings", "onboarding_complete", "BOOLEAN NOT NULL DEFAULT FALSE")
+
     async with AsyncSessionLocal() as db:
         # ── Admin account ──────────────────────────────────────────────────
         admin = await get_user_by_username(db, "admin")
@@ -117,3 +122,25 @@ async def _migrate_user_array_columns_to_json() -> None:
                     )
     except Exception as exc:  # noqa: BLE001
         logger.warning("User column type migration skipped: {}", exc)
+
+
+async def _add_missing_column(table: str, column: str, ddl_type: str) -> None:
+    """Idempotently add a column to an existing Postgres table if it doesn't
+    already exist. Never raises -- a failure here must not block startup.
+    No-ops on SQLite (used for tests)."""
+    from sqlalchemy import text
+
+    try:
+        async with engine.begin() as conn:
+            row = await conn.execute(
+                text(
+                    "SELECT 1 FROM information_schema.columns "
+                    "WHERE table_name = :t AND column_name = :c"
+                ),
+                {"t": table, "c": column},
+            )
+            if row.scalar() is None:
+                await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl_type}"))
+                logger.warning("Added missing column {}.{} (schema drift repair).", table, column)
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Column check/add for {}.{} skipped: {}", table, column, exc)

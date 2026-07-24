@@ -132,6 +132,9 @@ class CompanySettingsModel(Base):
     company_website: Mapped[str] = mapped_column(String(500), default="", nullable=False)
     greeting_script: Mapped[str] = mapped_column(Text, default="", nullable=False)
     agent_overrides: Mapped[dict] = mapped_column(_JSONB, default=dict, nullable=False)
+    # agent_overrides[dept] may hold: {"display_name": str, "script": str (legacy),
+    # "greeting": str, "closing": str, "transfer_message": str}
+    onboarding_complete: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
     updated_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
 
@@ -264,5 +267,28 @@ class KnowledgeDocumentModel(Base):
     uploaded_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     embedding_status: Mapped[str] = mapped_column(String(32), default="pending", nullable=False)
     metadata_: Mapped[dict] = mapped_column("metadata", _JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class ProductModel(Base):
+    """A product or service the business offers. Structured, beginner-friendly
+    alternative to uploading documents -- feeds the AI knowledge base
+    automatically so agents can answer questions about it accurately."""
+    __tablename__ = "products"
+
+    id: Mapped[uuid.UUID] = mapped_column(_UUID, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[str] = mapped_column(String(64), default="default", nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    price: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Stored as a display string (e.g. "$49.00 / month") to support any currency/format
+    sku: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    knowledge_document_id: Mapped[uuid.UUID | None] = mapped_column(_UUID, nullable=True)
+    # Links to the auto-generated KnowledgeDocumentModel row so edits/deletes stay in sync
+    metadata_: Mapped[dict] = mapped_column("metadata", _JSONB, default=dict, nullable=False)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
