@@ -26,11 +26,12 @@ RUN wget -q https://downloads.asterisk.org/pub/telephony/asterisk/asterisk-20-cu
 WORKDIR /usr/src/asterisk
 # Bundled pjproject gives us a known-good chan_pjsip/TLS stack regardless of
 # whatever (older) libpjproject may exist on the base image.
+# Skip an explicit menuselect step: with libsrtp2-dev/uuid-dev installed,
+# Asterisk's default menuselect.makeopts (auto-generated as a build
+# prerequisite) already enables everything we need — app_audiosocket,
+# res_audiosocket, res_srtp, chan_pjsip/res_pjsip* — since their
+# dependencies are satisfied and none of them are excluded by default.
 RUN ./configure --with-pjproject-bundled --with-jansson-bundled && \
-    menuselect/menuselect --enable app_audiosocket --enable res_audiosocket \
-        --enable res_srtp --enable chan_pjsip --enable res_pjsip \
-        --enable res_pjsip_session --enable res_pjsip_outbound_registration \
-        --enable codec_g711 menuselect.makeopts && \
     make -j"$(nproc)" && \
     make install && \
     make samples && \
