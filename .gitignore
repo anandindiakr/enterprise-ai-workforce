@@ -49,4 +49,7 @@ deploy/k8s/secrets/
 
 frontend/tsconfig.tsbuildinfo
 
-"Developments/"  
+Developments/
+~$*
+*.docx
+!docs/**/*.docx
