@@ -286,6 +286,12 @@ class ProductModel(Base):
     # Stored as a display string (e.g. "$49.00 / month") to support any currency/format
     sku: Mapped[str | None] = mapped_column(String(64), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    website_url: Mapped[str | None] = mapped_column(String(1024), nullable=True)
+    # Optional product/service page the admin wants the AI to read, understand
+    # and answer questions from (scraped into the KB doc alongside the form fields)
+    website_scraped_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    website_scrape_status: Mapped[str | None] = mapped_column(String(32), nullable=True)
+    # "pending" | "ok" | "error" -- surfaced in the catalog UI
     knowledge_document_id: Mapped[uuid.UUID | None] = mapped_column(_UUID, nullable=True)
     # Links to the auto-generated KnowledgeDocumentModel row so edits/deletes stay in sync
     metadata_: Mapped[dict] = mapped_column("metadata", _JSONB, default=dict, nullable=False)

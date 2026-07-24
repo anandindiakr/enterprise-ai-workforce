@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback } from "react";
 import {
   PackagePlus, Trash2, Search, RefreshCw, Pencil, X,
-  CheckCircle, AlertTriangle, ToggleLeft, ToggleRight, Sparkles,
+  CheckCircle, AlertTriangle, ToggleLeft, ToggleRight, Sparkles, Globe,
 } from "lucide-react";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { getToken } from "@/lib/auth";
@@ -16,6 +16,9 @@ interface Product {
   price: string | null;
   sku: string | null;
   is_active: boolean;
+  website_url: string | null;
+  website_scraped_at: string | null;
+  website_scrape_status: string | null;
   created_at: string;
   updated_at: string | null;
 }
@@ -35,10 +38,11 @@ interface FormState {
   price: string;
   sku: string;
   is_active: boolean;
+  website_url: string;
 }
 
 const EMPTY_FORM: FormState = {
-  name: "", description: "", category: "General", price: "", sku: "", is_active: true,
+  name: "", description: "", category: "General", price: "", sku: "", is_active: true, website_url: "",
 };
 
 function ProductModal({
@@ -101,6 +105,18 @@ function ProductModal({
               </button>
               Active (visible to agents)
             </label>
+          </div>
+          <div>
+            <label className="mb-1 flex items-center gap-1.5 text-xs font-medium text-slate-400">
+              <Globe className="h-3.5 w-3.5" /> Website URL (optional)
+            </label>
+            <input value={form.website_url} onChange={(e) => setForm((f) => ({ ...f, website_url: e.target.value }))}
+              placeholder="e.g. https://example.com/products/website-design" className={inputCls} />
+            <p className="mt-1 text-[10px] text-slate-600">
+              We&apos;ll read this page and let your AI agents answer questions using its content too — great for
+              detailed pages you don&apos;t want to retype. Anything outside the page&apos;s scope, agents will offer
+              to take your contact info and follow up instead of guessing.
+            </p>
           </div>
         </div>
         <div className="flex justify-end gap-2 pt-2">
@@ -178,6 +194,23 @@ export default function ProductsPage() {
       await fetch(`${API}/api/v1/products/${p.id}`, { method: "DELETE", headers: authHeaders() });
       await load();
     } catch {}
+  };
+
+  const [rescraping, setRescraping] = useState<string | null>(null);
+  const handleRescrape = async (p: Product) => {
+    setRescraping(p.id);
+    setMsg(null);
+    try {
+      const res = await fetch(`${API}/api/v1/products/${p.id}/rescrape`, { method: "POST", headers: authHeaders() });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.detail ?? "Re-scrape failed");
+      setMsg({ ok: data.website_scrape_status !== "error", text: `Website re-checked for "${p.name}".` });
+      await load();
+    } catch (e: unknown) {
+      setMsg({ ok: false, text: e instanceof Error ? e.message : "Error re-scraping website" });
+    } finally {
+      setRescraping(null);
+    }
   };
 
   const filtered = products.filter(
@@ -262,6 +295,12 @@ export default function ProductsPage() {
                 <div className="flex items-start justify-between gap-2 mb-2">
                   <h3 className="font-medium text-slate-200 text-sm truncate">{p.name}</h3>
                   <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-all flex-shrink-0">
+                    {p.website_url && (
+                      <button onClick={() => handleRescrape(p)} disabled={rescraping === p.id}
+                        className="text-slate-600 hover:text-emerald-400 disabled:opacity-50" title="Re-scrape website">
+                        <RefreshCw className={`h-3.5 w-3.5 ${rescraping === p.id ? "animate-spin" : ""}`} />
+                      </button>
+                    )}
                     <button onClick={() => openEdit(p)} className="text-slate-600 hover:text-emerald-400" title="Edit">
                       <Pencil className="h-3.5 w-3.5" />
                     </button>
@@ -283,6 +322,19 @@ export default function ProductsPage() {
                   {!p.is_active && (
                     <span className="rounded-full border border-slate-700 px-2 py-0.5 text-[10px] text-slate-500">Inactive</span>
                   )}
+                  {p.website_url && (
+                    <span title={p.website_url}
+                      className={`flex items-center gap-1 rounded-full border px-2 py-0.5 text-[10px] ${
+                        p.website_scrape_status === "ok"
+                          ? "border-emerald-500/20 bg-emerald-500/10 text-emerald-400"
+                          : p.website_scrape_status === "error"
+                          ? "border-red-500/20 bg-red-500/10 text-red-400"
+                          : "border-slate-700 text-slate-500"
+                      }`}>
+                      <Globe className="h-2.5 w-2.5" />
+                      {p.website_scrape_status === "ok" ? "Website linked" : p.website_scrape_status === "error" ? "Website error" : "Website pending"}
+                    </span>
+                  )}
                 </div>
               </div>
             ))}
@@ -294,6 +346,7 @@ export default function ProductsPage() {
             initial={editing ? {
               name: editing.name, description: editing.description ?? "", category: editing.category ?? "General",
               price: editing.price ?? "", sku: editing.sku ?? "", is_active: editing.is_active,
+              website_url: editing.website_url ?? "",
             } : EMPTY_FORM}
             onClose={() => setModalOpen(false)}
             onSave={handleSave}

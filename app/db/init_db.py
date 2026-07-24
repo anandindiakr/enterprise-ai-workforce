@@ -41,6 +41,9 @@ async def init_db() -> None:
     # new columns added to CompanySettingsModel after go-live need an explicit
     # idempotent ALTER TABLE here.
     await _add_missing_column("company_settings", "onboarding_complete", "BOOLEAN NOT NULL DEFAULT FALSE")
+    await _add_missing_column("products", "website_url", "VARCHAR(1024)")
+    await _add_missing_column("products", "website_scraped_at", "TIMESTAMPTZ")
+    await _add_missing_column("products", "website_scrape_status", "VARCHAR(32)")
 
     async with AsyncSessionLocal() as db:
         # ── Admin account ──────────────────────────────────────────────────

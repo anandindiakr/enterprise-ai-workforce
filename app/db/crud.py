@@ -481,6 +481,9 @@ async def create_product(
     price: str | None = None,
     sku: str | None = None,
     is_active: bool = True,
+    website_url: str | None = None,
+    website_scraped_at: datetime | None = None,
+    website_scrape_status: str | None = None,
     knowledge_document_id: uuid.UUID | None = None,
     created_by: str | None = None,
     metadata: dict | None = None,
@@ -493,6 +496,9 @@ async def create_product(
         price=price,
         sku=sku,
         is_active=is_active,
+        website_url=website_url,
+        website_scraped_at=website_scraped_at,
+        website_scrape_status=website_scrape_status,
         knowledge_document_id=knowledge_document_id,
         created_by=created_by,
         metadata_=metadata or {},
@@ -536,6 +542,10 @@ async def update_product(
     price: str | None = None,
     sku: str | None = None,
     is_active: bool | None = None,
+    website_url: str | None = None,
+    clear_website_url: bool = False,
+    website_scraped_at: datetime | None = None,
+    website_scrape_status: str | None = None,
     knowledge_document_id: uuid.UUID | None = None,
 ) -> ProductModel | None:
     product = await db.get(ProductModel, product_id)
@@ -547,6 +557,14 @@ async def update_product(
     if price        is not None: product.price       = price
     if sku          is not None: product.sku         = sku
     if is_active    is not None: product.is_active   = is_active
+    if clear_website_url:
+        product.website_url = None
+        product.website_scraped_at = None
+        product.website_scrape_status = None
+    elif website_url is not None:
+        product.website_url = website_url
+    if website_scraped_at is not None: product.website_scraped_at = website_scraped_at
+    if website_scrape_status is not None: product.website_scrape_status = website_scrape_status
     if knowledge_document_id is not None: product.knowledge_document_id = knowledge_document_id
     product.updated_at = datetime.now(timezone.utc)
     await db.flush()
