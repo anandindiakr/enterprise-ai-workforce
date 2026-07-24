@@ -1,0 +1,22 @@
+; ─────────────────────────────────────────────────────────────────────────
+; Dialplan: bridges inbound Singtel/B3Networks calls into our AudioSocket
+; TCP server, which streams audio to the FastAPI voice pipeline.
+; ─────────────────────────────────────────────────────────────────────────
+
+[from-singtel]
+; Inbound call arrives from the Singtel trunk (DDI ${SINGTEL_SIP_DDI}).
+; Hand it straight to AudioSocket — our app.voice.audiosocket_server TCP
+; listener accepts the connection and drives STT → agent → TTS.
+exten => _X.,1,NoOp(Incoming Singtel call to ${SINGTEL_SIP_DDI} from ${CALLERID(num)})
+ same => n,Answer()
+ same => n,Set(AUDIOSOCKET_UUID=${SHELL(cat /proc/sys/kernel/random/uuid | tr -d '\n')})
+ same => n,AudioSocket(${AUDIOSOCKET_UUID},${AUDIOSOCKET_HOST}:${AUDIOSOCKET_PORT})
+ same => n,Hangup()
+
+[outbound-singtel]
+; Optional: allow the app to originate outbound calls through the trunk
+; (e.g. proactive customer callbacks). Not wired to a caller yet — reserved
+; for a future "Sprint" feature.
+exten => _X.,1,NoOp(Outbound call via Singtel trunk to ${EXTEN})
+ same => n,Dial(PJSIP/${EXTEN}@singtel-endpoint,60)
+ same => n,Hangup()

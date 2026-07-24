@@ -37,6 +37,11 @@ async def voice_config() -> dict:
     twilio_sid    = bool(os.getenv("TWILIO_ACCOUNT_SID") or settings.twilio_account_sid)
     livekit_key   = bool(os.getenv("LIVEKIT_API_KEY") or settings.livekit_api_key)
     azure_key     = bool(os.getenv("AZURE_SPEECH_KEY") or settings.azure_speech_key)
+    singtel_configured = bool(
+        (os.getenv("SINGTEL_SIP_SERVER") or settings.singtel_sip_server)
+        and (os.getenv("SINGTEL_SIP_USERNAME") or settings.singtel_sip_username)
+        and (os.getenv("SINGTEL_SIP_PASSWORD") or settings.singtel_sip_password)
+    )
 
     stt_provider  = "deepgram" if deepgram_key else ("whisper" if openai_key else None)
     tts_provider  = "elevenlabs" if eleven_key else ("openai-tts" if openai_key else None)
@@ -61,6 +66,12 @@ async def voice_config() -> dict:
         "telephony": {
             "twilio":  {"configured": twilio_sid,  "label": "Twilio"},
             "livekit": {"configured": livekit_key, "label": "LiveKit"},
+            "singtel": {
+                "configured": singtel_configured,
+                "label": "Singtel SIP (B3Networks)",
+                "ddi": settings.singtel_sip_ddi or None,
+                "concurrent_calls": settings.singtel_sip_concurrent_calls,
+            },
         },
         "websocket_path": "/api/v1/ws/voice/{session_id}",
     }

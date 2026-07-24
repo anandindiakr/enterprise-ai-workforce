@@ -106,12 +106,24 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     asyncio.create_task(_delayed_reindex())
 
+    # AudioSocket TCP bridge for SIP telephony (Singtel/B3Networks via Asterisk).
+    # Harmless no-op if no SIP trunk/Asterisk is deployed — just an idle listener.
+    from app.voice.audiosocket_server import start_audiosocket_server
+    audiosocket_server = None
+    try:
+        audiosocket_server = await start_audiosocket_server()
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("AudioSocket server failed to start: {}", exc)
+
     try:
         yield
     finally:
         logger.info("AI Workforce shutting down")
         await mcp_registry().shutdown_all()
         await short_term_memory().close()
+        if audiosocket_server is not None:
+            audiosocket_server.close()
+            await audiosocket_server.wait_closed()
 
 
 def create_app() -> FastAPI:

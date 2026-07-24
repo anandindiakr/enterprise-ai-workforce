@@ -1,0 +1,69 @@
+; ─────────────────────────────────────────────────────────────────────────
+; PJSIP configuration for the Singtel / B3Networks SIP trunk.
+; Rendered from this template at container start (see entrypoint.sh), with
+; ${SINGTEL_SIP_*} placeholders substituted from environment variables.
+; ─────────────────────────────────────────────────────────────────────────
+
+[transport-tls]
+type=transport
+protocol=tls
+bind=0.0.0.0:5061
+cert_file=/etc/asterisk/keys/asterisk.crt
+priv_key_file=/etc/asterisk/keys/asterisk.key
+method=tlsv1_2
+external_media_address=${PUBLIC_IP}
+external_signaling_address=${PUBLIC_IP}
+local_net=172.16.0.0/12
+local_net=192.168.0.0/16
+local_net=10.0.0.0/8
+
+; ── Outbound registration to the B3Networks / Singtel trunk ────────────────
+[singtel-auth]
+type=auth
+auth_type=userpass
+username=${SINGTEL_SIP_USERNAME}
+password=${SINGTEL_SIP_PASSWORD}
+
+[singtel-aor]
+type=aor
+contact=sip:${SINGTEL_SIP_USERNAME}@${SINGTEL_SIP_SERVER}:5061;transport=tls
+qualify_frequency=30
+
+[singtel-registration]
+type=registration
+transport=transport-tls
+outbound_auth=singtel-auth
+server_uri=sip:${SINGTEL_SIP_SERVER}:5061;transport=tls
+client_uri=sip:${SINGTEL_SIP_USERNAME}@${SINGTEL_SIP_SERVER}:5061
+contact_user=${SINGTEL_SIP_USERNAME}
+retry_interval=60
+forbidden_retry_interval=600
+expiration=3600
+line=yes
+endpoint=singtel-endpoint
+
+; ── Trust only the trunk's signalling IP for inbound INVITEs ───────────────
+[singtel-identify]
+type=identify
+endpoint=singtel-endpoint
+match=${SINGTEL_SIP_SERVER}
+
+; ── The trunk endpoint itself: SRTP compulsory, TLS transport ──────────────
+[singtel-endpoint]
+type=endpoint
+transport=transport-tls
+context=from-singtel
+disallow=all
+allow=ulaw,alaw,g722
+outbound_auth=singtel-auth
+aors=singtel-aor
+from_user=${SINGTEL_SIP_USERNAME}
+from_domain=${SINGTEL_SIP_SERVER}
+media_encryption=sdes
+media_encryption_optimistic=no
+media_use_received_transport=yes
+rtp_symmetric=yes
+force_rport=yes
+rewrite_contact=yes
+direct_media=no
+ice_support=no

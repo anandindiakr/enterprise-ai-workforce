@@ -147,6 +147,27 @@ services:
       - api
     restart: unless-stopped
 
+  # ── Asterisk: SIP gateway for the Singtel/B3Networks trunk ─────────────────
+  # Only starts doing anything useful once SINGTEL_SIP_* vars are set in .env.
+  # Bridges PSTN calls to the FastAPI AudioSocket listener on the api container.
+  asterisk:
+    build:
+      context: ./deploy/asterisk
+      dockerfile: Dockerfile
+    image: ai-workforce/asterisk:latest
+    container_name: ai-workforce-asterisk
+    env_file:
+      - .env
+    environment:
+      AUDIOSOCKET_HOST: api
+      AUDIOSOCKET_PORT: "9092"
+    ports:
+      - "5061:5061"
+      - "10000-10200:10000-10200/udp"
+    depends_on:
+      - api
+    restart: unless-stopped
+
   # NOTE: No Caddy here — the host Nginx acts as reverse proxy.
   # See deploy/nginx-algoworkforce.conf for the Nginx virtual host config.
 

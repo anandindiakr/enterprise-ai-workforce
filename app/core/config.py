@@ -96,6 +96,18 @@ class AppSettings(BaseSettings):
     twilio_auth_token: str = ""
     twilio_phone_number: str = ""
 
+    # --- Singtel / B3Networks SIP trunk (PSTN via Asterisk, cheaper than Twilio) ---
+    singtel_sip_server: str = ""       # e.g. sipsg01.b3networks.com
+    singtel_sip_username: str = ""     # e.g. sip60956779
+    singtel_sip_password: str = ""
+    singtel_sip_ddi: str = ""          # e.g. +6564708728
+    singtel_sip_transport: str = "tls"  # tls | udp | tcp
+    singtel_sip_srtp: bool = True
+    singtel_sip_concurrent_calls: int = 5
+    # AudioSocket bridge (Asterisk <-> this API) — raw slin 8kHz PCM16 over TCP
+    audiosocket_host: str = "0.0.0.0"
+    audiosocket_port: int = 9092
+
     voice_stt_provider: str = "deepgram"
     voice_tts_provider: str = "elevenlabs"
     voice_realtime_provider: str = "openai_realtime"
