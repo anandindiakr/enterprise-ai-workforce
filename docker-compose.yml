@@ -47,9 +47,9 @@ services:
       - redis
       - api
     healthcheck:
-      test: ["CMD", "celery", "-A", "app.workers.celery_app", "inspect", "ping", "-d", "celery@$$HOSTNAME", "--timeout", "5"]
+      test: ["CMD-SHELL", "celery -A app.workers.celery_app inspect ping --timeout 10 2>&1 | grep -q pong || exit 1"]
       interval: 60s
-      timeout: 15s
+      timeout: 20s
       retries: 3
       start_period: 30s
     restart: unless-stopped
