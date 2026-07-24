@@ -7,7 +7,13 @@
 ; Inbound call arrives from the Singtel trunk (DDI ${SINGTEL_SIP_DDI}).
 ; Hand it straight to AudioSocket — our app.voice.audiosocket_server TCP
 ; listener accepts the connection and drives STT → agent → TTS.
-exten => _X.,1,NoOp(Incoming Singtel call to ${SINGTEL_SIP_DDI} from ${CALLERID(num)})
+;
+; NOTE: B3Networks/Singtel sends the inbound INVITE's request-URI user part
+; as the SIP trunk *username* (e.g. "sip60956779"), not the dialed DID —
+; so a digit-only pattern like "_X." never matches and Asterisk 404s the
+; call instantly (heard by the caller as one ring then disconnect). Use a
+; true catch-all ("_.") so any extension string reaches this call flow.
+exten => _.,1,NoOp(Incoming Singtel call to ${SINGTEL_SIP_DDI} (dialed exten: ${EXTEN}) from ${CALLERID(num)})
  same => n,Answer()
  same => n,Set(AUDIOSOCKET_UUID=${SHELL(cat /proc/sys/kernel/random/uuid | tr -d '\n')})
  same => n,AudioSocket(${AUDIOSOCKET_UUID},${AUDIOSOCKET_HOST}:${AUDIOSOCKET_PORT})
