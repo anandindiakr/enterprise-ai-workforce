@@ -8,7 +8,7 @@ import {
   ChevronRight, Zap, Trash2, RefreshCw, Globe,
   Building2, ChevronDown, ChevronUp, Bot,
   Users, UserPlus, UserX, ToggleLeft, ToggleRight,
-  Lock,
+  Lock, Sparkles, Wand2, ClipboardCopy,
 } from "lucide-react";
 import { getUser, setToken, clearAuth, type AuthUser, authHeaders } from "@/lib/auth";
 
@@ -114,6 +114,190 @@ interface AgentOverride {
 }
 const EMPTY_OVERRIDE: AgentOverride = { display_name: "", greeting: "", closing: "", transfer_message: "", script: "" };
 
+/* ── Script Wizard ───────────────────────────────────────────
+   Always-available helper that suggests greeting / closing /
+   transfer wording, tailored to the company name, department,
+   and (if available) the products/services on file — so a
+   beginner never has to stare at a blank textbox. Runs fully
+   client-side (no API key or extra network round-trip needed). */
+
+interface WizardProduct { name: string; category: string | null }
+
+type ScriptTone = "warm" | "professional" | "upbeat";
+
+const TONE_META: Record<ScriptTone, { label: string; emoji: string }> = {
+  warm:         { label: "Warm & Friendly",        emoji: "😊" },
+  professional: { label: "Professional & Concise", emoji: "🤝" },
+  upbeat:       { label: "Upbeat & Energetic",      emoji: "✨" },
+};
+
+function buildScriptIdeas(opts: {
+  companyName: string;
+  deptLabel: string;
+  agentName: string;
+  tone: ScriptTone;
+  products: WizardProduct[];
+}): { greeting: string; closing: string; transfer: string } {
+  const { deptLabel, tone, products } = opts;
+  const company = opts.companyName || "{company_name}";
+  const agent = opts.agentName || "{agent_name}";
+  const dept = deptLabel;
+  const topProducts = products.slice(0, 3).map((p) => p.name).filter(Boolean);
+  const productLine = topProducts.length
+    ? topProducts.length === 1
+      ? ` We help with ${topProducts[0]}.`
+      : ` We help with things like ${topProducts.slice(0, -1).join(", ")} and ${topProducts[topProducts.length - 1]}.`
+    : "";
+
+  const GREETINGS: Record<ScriptTone, string> = {
+    warm: `Thank you so much for calling ${company}! This is ${agent} from ${dept}.${productLine} How can I help you today?`,
+    professional: `Good day, thank you for calling ${company}, ${dept} department. This is ${agent} speaking. How may I assist you?`,
+    upbeat: `Hey there! Thanks for calling ${company} — you've reached ${agent} in ${dept}.${productLine} What can I do for you today?`,
+  };
+  const CLOSINGS: Record<ScriptTone, string> = {
+    warm: `Thanks so much for calling ${company} — it was a pleasure helping you. Have a wonderful day!`,
+    professional: `Thank you for contacting ${company}. Have a good day.`,
+    upbeat: `Thanks a ton for calling ${company}! Take care and have an awesome day!`,
+  };
+  const TRANSFERS: Record<ScriptTone, string> = {
+    warm: `Of course — let me connect you with our ${dept} team right away so they can take great care of you. One moment please!`,
+    professional: `Understood. I'll transfer you to our ${dept} department now — please hold for a moment.`,
+    upbeat: `No problem at all! Connecting you to ${dept} now — hang tight, just a sec!`,
+  };
+
+  return { greeting: GREETINGS[tone], closing: CLOSINGS[tone], transfer: TRANSFERS[tone] };
+}
+
+function ScriptWizard({
+  deptLabel, agentName, companyName, products, onUse,
+}: {
+  deptLabel: string;
+  agentName: string;
+  companyName: string;
+  products: WizardProduct[];
+  onUse: (field: "greeting" | "closing" | "transfer_message", value: string) => void;
+}) {
+  const [tone, setTone] = useState<ScriptTone>("warm");
+  const [open, setOpen] = useState(false);
+  const ideas = buildScriptIdeas({ companyName, deptLabel, agentName, tone, products });
+
+  return (
+    <div className="rounded-lg border border-violet-500/25 bg-violet-500/5 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-3 py-2.5 text-left hover:bg-violet-500/10 transition-colors"
+      >
+        <span className="flex items-center gap-2 text-xs font-medium text-violet-300">
+          <Wand2 className="h-3.5 w-3.5" />
+          Script Wizard — need help writing this?
+        </span>
+        {open ? <ChevronUp className="h-3.5 w-3.5 text-violet-400" /> : <ChevronDown className="h-3.5 w-3.5 text-violet-400" />}
+      </button>
+      {open && (
+        <div className="border-t border-violet-500/20 p-3 space-y-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] text-violet-300/70 mr-1">Tone:</span>
+            {(Object.keys(TONE_META) as ScriptTone[]).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTone(t)}
+                className={`rounded-full border px-2.5 py-1 text-[10px] transition-all ${
+                  tone === t
+                    ? "border-violet-400/50 bg-violet-500/20 text-violet-200"
+                    : "border-[#1f2937] text-slate-500 hover:text-slate-300"
+                }`}
+              >
+                {TONE_META[t].emoji} {TONE_META[t].label}
+              </button>
+            ))}
+          </div>
+          {products.length === 0 && (
+            <p className="text-[10px] text-slate-600">
+              Tip: add items in <span className="text-violet-300/80">Products &amp; Services</span> and these
+              suggestions will automatically mention them.
+            </p>
+          )}
+          {([
+            { field: "greeting" as const, label: "Greeting idea", text: ideas.greeting },
+            { field: "closing" as const, label: "Closing idea", text: ideas.closing },
+            { field: "transfer_message" as const, label: "Transfer idea", text: ideas.transfer },
+          ]).map(({ field, label, text }) => (
+            <div key={field} className="rounded-lg border border-[#1f2937] bg-[#070d1a] p-2.5">
+              <div className="flex items-center justify-between gap-2 mb-1">
+                <span className="text-[10px] font-medium text-slate-500">{label}</span>
+                <button
+                  onClick={() => onUse(field, text)}
+                  className="flex items-center gap-1 rounded-md bg-violet-500/15 border border-violet-500/30 px-2 py-0.5 text-[10px] text-violet-300 hover:bg-violet-500/25 transition-all"
+                >
+                  <ClipboardCopy className="h-2.5 w-2.5" /> Use this
+                </button>
+              </div>
+              <p className="text-xs text-slate-300 leading-relaxed">{text}</p>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function GlobalGreetingWizard({
+  companyName, products, onUse,
+}: { companyName: string; products: WizardProduct[]; onUse: (value: string) => void }) {
+  const [tone, setTone] = useState<ScriptTone>("warm");
+  const [open, setOpen] = useState(false);
+  const ideas = buildScriptIdeas({ companyName, deptLabel: "our team", agentName: "", tone, products });
+
+  return (
+    <div className="rounded-lg border border-violet-500/25 bg-violet-500/5 overflow-hidden">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between px-3 py-2.5 text-left hover:bg-violet-500/10 transition-colors"
+      >
+        <span className="flex items-center gap-2 text-xs font-medium text-violet-300">
+          <Wand2 className="h-3.5 w-3.5" />
+          Script Wizard — get a greeting idea
+        </span>
+        {open ? <ChevronUp className="h-3.5 w-3.5 text-violet-400" /> : <ChevronDown className="h-3.5 w-3.5 text-violet-400" />}
+      </button>
+      {open && (
+        <div className="border-t border-violet-500/20 p-3 space-y-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <span className="text-[10px] text-violet-300/70 mr-1">Tone:</span>
+            {(Object.keys(TONE_META) as ScriptTone[]).map((t) => (
+              <button
+                key={t}
+                onClick={() => setTone(t)}
+                className={`rounded-full border px-2.5 py-1 text-[10px] transition-all ${
+                  tone === t
+                    ? "border-violet-400/50 bg-violet-500/20 text-violet-200"
+                    : "border-[#1f2937] text-slate-500 hover:text-slate-300"
+                }`}
+              >
+                {TONE_META[t].emoji} {TONE_META[t].label}
+              </button>
+            ))}
+          </div>
+          <div className="rounded-lg border border-[#1f2937] bg-[#070d1a] p-2.5">
+            <div className="flex items-center justify-between gap-2 mb-1">
+              <span className="text-[10px] font-medium text-slate-500">Greeting idea</span>
+              <button
+                onClick={() => onUse(ideas.greeting)}
+                className="flex items-center gap-1 rounded-md bg-violet-500/15 border border-violet-500/30 px-2 py-0.5 text-[10px] text-violet-300 hover:bg-violet-500/25 transition-all"
+              >
+                <ClipboardCopy className="h-2.5 w-2.5" /> Use this
+              </button>
+            </div>
+            <p className="text-xs text-slate-300 leading-relaxed">{ideas.greeting}</p>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function CompanyPanel({ apiBase }: { apiBase: string }) {
   const [companyName, setCompanyName]       = useState("");
   const [tagline, setTagline]               = useState("");
@@ -123,6 +307,7 @@ function CompanyPanel({ apiBase }: { apiBase: string }) {
   const [expanded, setExpanded]             = useState<string | null>(null);
   const [saving, setSaving]                 = useState(false);
   const [msg, setMsg]                       = useState<{ ok: boolean; text: string } | null>(null);
+  const [products, setProducts]             = useState<WizardProduct[]>([]);
 
   useEffect(() => {
     fetch(`${apiBase}/settings/company`, { headers: authHeaders() })
@@ -133,6 +318,19 @@ function CompanyPanel({ apiBase }: { apiBase: string }) {
         setWebsite(d.company_website    ?? "");
         setGreetingScript(d.greeting_script ?? "");
         setOverrides(d.agent_overrides  ?? {});
+      })
+      .catch(() => {});
+    // Fetch products/services so the Script Wizard can mention them by name.
+    fetch(`${apiBase}/api/v1/products`, { headers: authHeaders() })
+      .then((r) => (r.ok ? r.json() : []))
+      .then((list) => {
+        if (Array.isArray(list)) {
+          setProducts(
+            list
+              .filter((p: { is_active?: boolean }) => p.is_active !== false)
+              .map((p: { name: string; category: string | null }) => ({ name: p.name, category: p.category ?? null }))
+          );
+        }
       })
       .catch(() => {});
   }, [apiBase]);
@@ -208,6 +406,7 @@ function CompanyPanel({ apiBase }: { apiBase: string }) {
           <code className="text-amber-500/80">{"{department}"}</code>.
           Leave blank to use the default per-agent greeting. Per-department scripts below override this.
         </p>
+        <GlobalGreetingWizard companyName={companyName} products={products} onUse={setGreetingScript} />
       </div>
 
       {/* Per-department agent customisation */}
@@ -247,6 +446,15 @@ function CompanyPanel({ apiBase }: { apiBase: string }) {
                       placeholder={`e.g. "Alex" or "Sam"`} className={inputCls} />
                     <p className="mt-1 text-[10px] text-slate-600">Overrides the default name for this department only.</p>
                   </div>
+
+                  <ScriptWizard
+                    deptLabel={label}
+                    agentName={ov.display_name}
+                    companyName={companyName}
+                    products={products}
+                    onUse={(field, value) => setOverride(key, field, value)}
+                  />
+
                   <div>
                     <label className="mb-1 block text-[11px] font-medium text-slate-500">Greeting (start of call)</label>
                     <textarea value={ov.greeting} onChange={(e) => setOverride(key, "greeting", e.target.value)}
