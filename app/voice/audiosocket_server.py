@@ -48,7 +48,7 @@ _SILENCE_FLUSH_SECS: Final[float] = 1.0
 _MAX_BUFFER_BYTES:   Final[int]   = 8_000 * 2 * 8  # 8 s of slin8k PCM16
 _FRAME_BYTES:        Final[int]   = 320             # 20 ms @ 8 kHz * 2 bytes
 _GREETING = (
-    "Thank you for calling. This is your AI assistant. How can I help you today?"
+    "Hi there, thanks so much for calling! I'm your AI assistant — how can I help you today?"
 )
 
 
@@ -122,6 +122,23 @@ async def _play_greeting(writer: asyncio.StreamWriter, lock: asyncio.Lock) -> No
         await _play_text(writer, _GREETING)
 
 
+_DEPT_LABELS = {
+    "reception": "Reception", "customer_care": "Customer Care",
+    "sales": "Sales", "hr": "Human Resources", "finance": "Finance",
+    "technology": "Technology", "marketing": "Marketing",
+}
+
+_DEPT_INTROS = {
+    "reception":      "Hi, this is Reception. How can I help you?",
+    "customer_care":  "Hi there! I'm from Customer Care. I'm here to resolve your issue.",
+    "sales":          "Hi! I'm your Sales agent. I can help with pricing, products, and purchases.",
+    "hr":             "Hello! I'm the HR agent. I can assist with employment and HR queries.",
+    "finance":        "Hi, this is Finance. I can help with billing, invoices, and payments.",
+    "technology":     "Hello! This is Tech Support. I'm here to help with your technical issue.",
+    "marketing":      "Hi! I'm the Marketing agent. I can help with campaigns and branding.",
+}
+
+
 async def _process_utterance(
     writer: asyncio.StreamWriter,
     audio_bytes: bytes,
@@ -154,18 +171,70 @@ async def _process_utterance(
                 tenant_id=tenant_id,
             )
         )
-        reply = chat_resp.message.content or "I'm sorry, could you repeat that?"
     except Exception as exc:  # noqa: BLE001
         logger.warning("AudioSocket chat handling failed: {}", exc)
-        reply = "I'm sorry, there was an error. Please try again."
+        if writer.is_closing():
+            return
+        async with lock:
+            await _play_text(writer, "I'm sorry, there was an error. Please try again.")
+        return
 
     if writer.is_closing():
         return
+
+    # --- Department transfer: hand off, switch department on the live
+    # session, then let the new department speak -- mirrors the browser
+    # voice path (voice_ws.py). Without this the call previously just hung
+    # after a transfer request because nothing was ever spoken/switched.
+    if chat_resp.transferred_to:
+        new_dept_raw = chat_resp.transferred_to
+        new_dept = new_dept_raw.value if hasattr(new_dept_raw, "value") else str(new_dept_raw)
+        try:
+            session.department = Department(new_dept)  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            pass
+
+        label = _DEPT_LABELS.get(new_dept, new_dept.replace("_", " ").title())
+        handoff = chat_resp.message.content or f"Of course — connecting you to our {label} team now."
+
+        async with lock:
+            if writer.is_closing():
+                return
+            await _play_text(writer, handoff)
+            if writer.is_closing():
+                return
+            await _play_text(writer, _DEPT_INTROS.get(new_dept, f"Hi, this is {label}. How can I help you?"))
+
+        # Let the new department actually answer the caller's original
+        # question, instead of leaving them hanging after just the intro.
+        try:
+            followup = await chat_service().handle_fast(
+                ChatRequest(
+                    message=transcript,
+                    department=new_dept,
+                    session_id=session_id,
+                    user_id=user_id,
+                    tenant_id=tenant_id,
+                )
+            )
+            follow_text = (followup.message.content or "").strip()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("AudioSocket transfer follow-up failed: {}", exc)
+            follow_text = ""
+
+        if follow_text and not writer.is_closing():
+            async with lock:
+                await _play_text(writer, follow_text)
+        return
+
+    reply = chat_resp.message.content or "I'm sorry, could you repeat that?"
 
     # Serialize TTS playback per-call: if two utterances get processed
     # concurrently (e.g. STT/LLM finished out of order), writing both to the
     # same TCP transport at once interleaves audio frames and sounds garbled.
     async with lock:
+        if writer.is_closing():
+            return
         await _play_text(writer, reply)
 
 

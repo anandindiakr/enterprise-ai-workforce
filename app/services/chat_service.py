@@ -459,7 +459,7 @@ class ChatService:
         intent = detect_transfer_intent(request.message)
         if intent is not None and intent != department:
             label = dept_labels.get(intent.value, intent.value.replace("_", " ").title())
-            text = f"Of course — connecting you to our {label} team now."
+            text = f"Sure thing! Let me connect you with our {label} team right now — one moment."
             agent_msg = Message(
                 session_id=session_id,
                 role=Role.AGENT,
@@ -509,7 +509,7 @@ class ChatService:
                 completion = await client.chat.completions.create(
                     model=getattr(settings, "openai_model", "gpt-4o-mini"),
                     messages=messages,
-                    temperature=0.6,
+                    temperature=0.75,  # a bit more natural/varied for warm conversational speech
                     max_tokens=400,  # keep spoken replies concise
                 )
                 text = (completion.choices[0].message.content or "").strip()
@@ -539,7 +539,7 @@ class ChatService:
         if leaked_transfer is not None and leaked_transfer != department:
             target = leaked_transfer
             target_profile = PROFILES_BY_DEPARTMENT.get(target)
-            handoff = f"Of course — connecting you to our {target.value.title()} team now."
+            handoff = f"Sure thing! Let me connect you with our {target.value.title()} team right now — one moment."
             agent_msg = Message(
                 session_id=session_id,
                 role=Role.AGENT,
