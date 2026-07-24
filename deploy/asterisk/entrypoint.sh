@@ -36,5 +36,13 @@ if [ ! -f /etc/asterisk/keys/asterisk.key ]; then
         -subj "/CN=${PUBLIC_IP}"
 fi
 
+# Asterisk drops privileges to the 'asterisk' user below (-U/-G), but the
+# keypair above is created by root — without this it can't read the private
+# key and the whole transport-tls (and everything depending on it) fails
+# to load silently.
+chown asterisk:asterisk /etc/asterisk/keys/asterisk.key /etc/asterisk/keys/asterisk.crt
+chmod 640 /etc/asterisk/keys/asterisk.key
+chmod 644 /etc/asterisk/keys/asterisk.crt
+
 echo "Starting Asterisk (foreground)..."
 exec asterisk -f -vvv -U asterisk -G asterisk
