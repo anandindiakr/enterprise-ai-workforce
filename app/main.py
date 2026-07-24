@@ -108,10 +108,21 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
 
     # AudioSocket TCP bridge for SIP telephony (Singtel/B3Networks via Asterisk).
     # Harmless no-op if no SIP trunk/Asterisk is deployed — just an idle listener.
+    # NOTE: uvicorn runs multiple worker processes (see Dockerfile --workers), and
+    # each one executes this lifespan independently. Only the first worker to reach
+    # this line can actually bind the port; the rest get EADDRINUSE, which is the
+    # expected/normal outcome (one listener is all we need) -- not a real failure.
     from app.voice.audiosocket_server import start_audiosocket_server
     audiosocket_server = None
     try:
         audiosocket_server = await start_audiosocket_server()
+    except OSError as exc:
+        if exc.errno in (48, 98):  # EADDRINUSE (macOS=48, Linux=98)
+            logger.info(
+                "AudioSocket port already bound by another worker process (expected with --workers > 1)"
+            )
+        else:
+            logger.warning("AudioSocket server failed to start: {}", exc)
     except Exception as exc:  # noqa: BLE001
         logger.warning("AudioSocket server failed to start: {}", exc)
 
