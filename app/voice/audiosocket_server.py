@@ -61,6 +61,8 @@ async def _read_frame(reader: asyncio.StreamReader) -> tuple[int, bytes]:
 
 
 async def _write_frame(writer: asyncio.StreamWriter, kind: int, payload: bytes = b"") -> None:
+    if writer.is_closing():
+        raise ConnectionResetError("AudioSocket transport is closing")
     writer.write(bytes([kind]) + struct.pack(">H", len(payload)) + payload)
     await writer.drain()
 
@@ -68,6 +70,9 @@ async def _write_frame(writer: asyncio.StreamWriter, kind: int, payload: bytes =
 async def _play_text(writer: asyncio.StreamWriter, text: str) -> None:
     """Synthesize `text` via the shared TTS chain and stream it back as slin8k."""
     from app.api.ws.voice_ws import _tts  # local import avoids circular import at module load
+
+    if writer.is_closing():
+        return
 
     try:
         audio_bytes, provider = await _tts(text)
@@ -82,6 +87,8 @@ async def _play_text(writer: asyncio.StreamWriter, text: str) -> None:
         return
 
     for i in range(0, len(pcm), _FRAME_BYTES):
+        if writer.is_closing():
+            return
         chunk = pcm[i : i + _FRAME_BYTES]
         if len(chunk) < _FRAME_BYTES:
             chunk = chunk + b"\x00" * (_FRAME_BYTES - len(chunk))
@@ -110,16 +117,22 @@ def _decode_to_slin8k(audio_bytes: bytes) -> bytes:
     return pcm16.tobytes()
 
 
+async def _play_greeting(writer: asyncio.StreamWriter, lock: asyncio.Lock) -> None:
+    async with lock:
+        await _play_text(writer, _GREETING)
+
+
 async def _process_utterance(
     writer: asyncio.StreamWriter,
     audio_bytes: bytes,
     session: object,
     session_id: str,
+    lock: asyncio.Lock,
 ) -> None:
     from app.api.ws.voice_ws import _stt  # local import avoids circular import at module load
 
     transcript = await _stt(audio_bytes, sample_rate=8_000)
-    if not transcript:
+    if not transcript or writer.is_closing():
         return
 
     dept_raw  = getattr(session, "department", "reception")
@@ -128,7 +141,11 @@ async def _process_utterance(
     tenant_id = str(getattr(session, "tenant_id", "default"))
 
     try:
-        chat_resp = await chat_service().handle(
+        # handle_fast() is a low-latency single-turn path (~1-2s) purpose-built
+        # for voice; the full handle() multi-agent director loop takes 10-20s+
+        # per turn (huge system prompts + 2 sequential LLM calls), which is
+        # unusable on a live phone call and was causing long dead-air gaps.
+        chat_resp = await chat_service().handle_fast(
             ChatRequest(
                 message=transcript,
                 department=dept,
@@ -142,7 +159,14 @@ async def _process_utterance(
         logger.warning("AudioSocket chat handling failed: {}", exc)
         reply = "I'm sorry, there was an error. Please try again."
 
-    await _play_text(writer, reply)
+    if writer.is_closing():
+        return
+
+    # Serialize TTS playback per-call: if two utterances get processed
+    # concurrently (e.g. STT/LLM finished out of order), writing both to the
+    # same TCP transport at once interleaves audio frames and sounds garbled.
+    async with lock:
+        await _play_text(writer, reply)
 
 
 async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
@@ -155,6 +179,17 @@ async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.Stream
     audio_buffer = bytearray()
     last_speech_ts = asyncio.get_event_loop().time()
     in_utterance = False
+
+    # A single lock per call serializes all TTS playback (greeting + every
+    # utterance reply) so concurrent tasks can never write interleaved audio
+    # frames to the same TCP transport at once (was causing garbled audio).
+    playback_lock = asyncio.Lock()
+    background_tasks: set[asyncio.Task] = set()
+
+    def _spawn(coro) -> None:
+        task = asyncio.create_task(coro)
+        background_tasks.add(task)
+        task.add_done_callback(background_tasks.discard)
 
     try:
         while True:
@@ -176,7 +211,7 @@ async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.Stream
                         department=Department.RECEPTION,
                     )
                     session_id = session.session_id
-                    asyncio.create_task(_play_text(writer, _GREETING))
+                    _spawn(_play_greeting(writer, playback_lock))
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("AudioSocket session open failed: {}", exc)
                     break
@@ -197,16 +232,16 @@ async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.Stream
                         utterance = bytes(audio_buffer)
                         audio_buffer.clear()
                         in_utterance = False
-                        asyncio.create_task(
-                            _process_utterance(writer, utterance, session, session_id)
+                        _spawn(
+                            _process_utterance(writer, utterance, session, session_id, playback_lock)
                         )
 
                 if len(audio_buffer) >= _MAX_BUFFER_BYTES:
                     utterance = bytes(audio_buffer)
                     audio_buffer.clear()
                     in_utterance = False
-                    asyncio.create_task(
-                        _process_utterance(writer, utterance, session, session_id)
+                    _spawn(
+                        _process_utterance(writer, utterance, session, session_id, playback_lock)
                     )
 
             elif kind == KIND_ERROR:
@@ -215,6 +250,15 @@ async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.Stream
     except Exception as exc:  # noqa: BLE001
         logger.exception("AudioSocket connection error peer={}: {}", peer, exc)
     finally:
+        # Cancel any in-flight STT/LLM/TTS tasks before closing the socket --
+        # without this, a task still running after hangup would eventually
+        # try to write audio frames to an already-closed transport and raise
+        # an unhandled "Task exception was never retrieved" RuntimeError.
+        for task in list(background_tasks):
+            task.cancel()
+        if background_tasks:
+            await asyncio.gather(*background_tasks, return_exceptions=True)
+
         if session_id:
             try:
                 await voice_session_manager().close(session_id)
