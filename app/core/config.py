@@ -112,6 +112,11 @@ class AppSettings(BaseSettings):
     voice_tts_provider: str = "elevenlabs"
     voice_realtime_provider: str = "openai_realtime"
 
+    # --- Vapi (voice AI platform — replaces Asterisk/AudioSocket for phone calls) ---
+    vapi_api_key: str = ""          # Vapi private API key (server-side, for assistant sync)
+    vapi_webhook_secret: str = ""   # verifies X-Vapi-Signature on inbound webhooks
+    vapi_assistant_id: str = ""     # assistant created via scripts/vapi_setup.py
+
     # --- MCP integrations ---
     # Defaults point to the built-in mock servers (self-referencing on same app)
     mcp_base_url: str = "http://localhost:8000"  # internal URL (docker: http://api:8000)

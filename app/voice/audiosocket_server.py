@@ -47,10 +47,6 @@ KIND_AUDIO:  Final[int] = 0x10
 _SILENCE_FLUSH_SECS: Final[float] = 1.0
 _MAX_BUFFER_BYTES:   Final[int]   = 8_000 * 2 * 8  # 8 s of slin8k PCM16
 _FRAME_BYTES:        Final[int]   = 320             # 20 ms @ 8 kHz * 2 bytes
-_GREETING = (
-    "Thank you for calling AI Algo, how can I assist you?"
-)
-_HOLD_PHRASE = "One moment, connecting you now."
 
 
 async def _read_frame(reader: asyncio.StreamReader) -> tuple[int, bytes]:
@@ -176,54 +172,12 @@ def _resample(data, sr: int, target_sr: int):
         return np.interp(x_new, x_old, data)
 
 
-async def _get_branding(tenant_id: str = "default"):
-    """Fetch (cached) company branding so voice scripts reflect Settings UI edits."""
-    from app.core.company import get_company_branding
-
-    try:
-        return await get_company_branding(tenant_id)
-    except Exception:  # noqa: BLE001
-        return None
-
-
-def _dept_override(branding, department: str) -> dict:
-    if branding is None:
-        return {}
-    return (branding.agent_overrides or {}).get(department) or {}
-
-
-def _company_greeting(branding, department: str = "reception") -> str:
-    """Resolve the opening greeting for `department`, preferring the admin's
-    configured script (Settings -> Call Scripts) over the hardcoded default."""
-    override = _dept_override(branding, department)
-    custom = (override.get("greeting") or override.get("script") or "").strip()
-    if custom:
-        company_name = (branding.company_name if branding else None) or settings.company_name
-        try:
-            return custom.format(company_name=company_name, department=department)
-        except (KeyError, IndexError):
-            return custom
-    return _GREETING
-
-
-def _company_transfer_message(branding, department: str) -> str:
-    """Resolve the phrase spoken while transferring OUT of `department`."""
-    override = _dept_override(branding, department)
-    custom = (override.get("transfer_message") or "").strip()
-    return custom or _HOLD_PHRASE
-
-
-def _company_dept_intro(branding, department: str) -> str:
-    """Resolve the greeting spoken by the NEW department right after a transfer."""
-    override = _dept_override(branding, department)
-    custom = (override.get("greeting") or override.get("script") or "").strip()
-    if custom:
-        company_name = (branding.company_name if branding else None) or settings.company_name
-        try:
-            return custom.format(company_name=company_name, department=department)
-        except (KeyError, IndexError):
-            return custom
-    return _DEPT_INTROS.get(department, f"Hi, this is {_DEPT_LABELS.get(department, department.replace('_', ' ').title())}. How can I help you?")
+from app.voice.branding import (
+    company_dept_intro as _company_dept_intro,
+    company_greeting as _company_greeting,
+    company_transfer_message as _company_transfer_message,
+    get_branding as _get_branding,
+)
 
 
 async def _play_greeting(
@@ -269,23 +223,6 @@ async def _play_greeting(
             )
         except Exception as exc:  # noqa: BLE001
             logger.warning("AudioSocket: failed to record greeting in memory: {}", exc)
-
-
-_DEPT_LABELS = {
-    "reception": "Reception", "customer_care": "Customer Care",
-    "sales": "Sales", "hr": "Human Resources", "finance": "Finance",
-    "technology": "Technology", "marketing": "Marketing",
-}
-
-_DEPT_INTROS = {
-    "reception":      "Hi, this is Reception. How can I help you?",
-    "customer_care":  "Hi there! I'm from Customer Care. I'm here to resolve your issue.",
-    "sales":          "Hi! I'm your Sales agent. I can help with pricing, products, and purchases.",
-    "hr":             "Hello! I'm the HR agent. I can assist with employment and HR queries.",
-    "finance":        "Hi, this is Finance. I can help with billing, invoices, and payments.",
-    "technology":     "Hello! This is Tech Support. I'm here to help with your technical issue.",
-    "marketing":      "Hi! I'm the Marketing agent. I can help with campaigns and branding.",
-}
 
 
 async def _process_utterance(
