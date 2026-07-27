@@ -264,7 +264,7 @@ async def _elevenlabs_tts(text: str, voice_id: str) -> bytes:
     body = {
         "text": text,
         "model_id": "eleven_turbo_v2",
-        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+        "voice_settings": {"stability": 0.5, "similarity_boost": 0.75, "speed": 0.9},
     }
     async with aiohttp.ClientSession() as session:
         async with session.post(url, json=body, headers=headers) as resp:
@@ -282,7 +282,7 @@ async def _openai_tts(text: str) -> bytes:
         "Authorization": f"Bearer {os.environ['OPENAI_API_KEY']}",
         "Content-Type": "application/json",
     }
-    body = {"model": "tts-1", "input": text, "voice": "nova", "response_format": "mp3"}
+    body = {"model": "tts-1", "input": text, "voice": "nova", "response_format": "mp3", "speed": 0.9}
     async with aiohttp.ClientSession() as session:
         async with session.post(url, json=body, headers=headers) as resp:
             if resp.status != 200:
@@ -352,7 +352,7 @@ async def speak_stream(
             body = {
                 "text": payload.text[:4096],
                 "model_id": "eleven_turbo_v2",
-                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+                "voice_settings": {"stability": 0.5, "similarity_boost": 0.75, "speed": 0.9},
             }
             async with aiohttp.ClientSession() as session:
                 async with session.post(url, json=body, headers=headers) as resp:

@@ -38,6 +38,7 @@ class ElevenLabsTTS(TTSProvider):
             output_format="pcm_24000",
             text=text,
             model_id="eleven_turbo_v2_5",
+            voice_settings={"stability": 0.5, "similarity_boost": 0.75, "speed": 0.9},
         )
         async for chunk in stream:
             if chunk:

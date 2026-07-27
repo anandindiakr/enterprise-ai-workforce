@@ -361,7 +361,7 @@ async def _tts(text: str) -> tuple[bytes, str]:
         body = {
             "text": text[:4096],
             "model_id": "eleven_turbo_v2",
-            "voice_settings": {"stability": 0.5, "similarity_boost": 0.75},
+            "voice_settings": {"stability": 0.5, "similarity_boost": 0.75, "speed": 0.9},
         }
         try:
             async with aiohttp.ClientSession() as s:
@@ -375,7 +375,7 @@ async def _tts(text: str) -> tuple[bytes, str]:
     if openai_key:
         url = "https://api.openai.com/v1/audio/speech"
         headers = {"Authorization": f"Bearer {openai_key}", "Content-Type": "application/json"}
-        body = {"model": "tts-1", "input": text[:4096], "voice": "nova", "response_format": "mp3"}
+        body = {"model": "tts-1", "input": text[:4096], "voice": "nova", "response_format": "mp3", "speed": 0.9}
         async with aiohttp.ClientSession() as s:
             async with s.post(url, json=body, headers=headers, timeout=aiohttp.ClientTimeout(total=25)) as r:
                 if r.status == 200:
