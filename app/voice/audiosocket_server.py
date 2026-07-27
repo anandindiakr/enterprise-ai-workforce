@@ -68,36 +68,72 @@ async def _write_frame(writer: asyncio.StreamWriter, kind: int, payload: bytes =
     await writer.drain()
 
 
-async def _play_text(writer: asyncio.StreamWriter, text: str) -> None:
+class _DuplexGuard:
+    """Half-duplex guard: tracks whether the bot is currently "speaking" so the
+    caller-audio loop can ignore frames while/just-after TTS is playing.
+
+    Root cause this fixes: on many SIP/analog trunks a portion of the bot's
+    own TTS playback leaks back into the inbound audio path (line echo / weak
+    echo-cancellation on the gateway). Without this guard, that echoed audio
+    was picked up by the VAD as "caller speech", transcribed (often garbled),
+    and sent back through the LLM -- which, seeing no prior turn, greeted the
+    caller again. That's what sounded like "before I could say anything it
+    switches back to the receptionist, again have to hear the greeting."
+    """
+
+    __slots__ = ("speaking", "muted_until")
+
+    def __init__(self) -> None:
+        self.speaking = False
+        self.muted_until = 0.0
+
+    def is_muted(self, now: float) -> bool:
+        return self.speaking or now < self.muted_until
+
+    def start(self) -> None:
+        self.speaking = True
+
+    def stop(self, tail_guard_secs: float = 0.45) -> None:
+        self.speaking = False
+        self.muted_until = asyncio.get_event_loop().time() + tail_guard_secs
+
+
+async def _play_text(writer: asyncio.StreamWriter, text: str, guard: "_DuplexGuard | None" = None) -> None:
     """Synthesize `text` via the shared TTS chain and stream it back as slin8k."""
     from app.api.ws.voice_ws import _tts  # local import avoids circular import at module load
 
     if writer.is_closing():
         return
 
+    if guard is not None:
+        guard.start()
     try:
-        audio_bytes, provider = await _tts(text)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("AudioSocket TTS failed: {}", exc)
-        return
-
-    try:
-        pcm = _decode_to_slin8k(audio_bytes)
-    except Exception as exc:  # noqa: BLE001
-        logger.warning("AudioSocket audio decode failed (provider={}): {}", provider, exc)
-        return
-
-    for i in range(0, len(pcm), _FRAME_BYTES):
-        if writer.is_closing():
-            return
-        chunk = pcm[i : i + _FRAME_BYTES]
-        if len(chunk) < _FRAME_BYTES:
-            chunk = chunk + b"\x00" * (_FRAME_BYTES - len(chunk))
         try:
-            await _write_frame(writer, KIND_AUDIO, chunk)
-        except (ConnectionResetError, BrokenPipeError):
+            audio_bytes, provider = await _tts(text)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("AudioSocket TTS failed: {}", exc)
             return
-        await asyncio.sleep(0.02)  # real-time pacing so Asterisk's jitter buffer doesn't overrun
+
+        try:
+            pcm = _decode_to_slin8k(audio_bytes)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("AudioSocket audio decode failed (provider={}): {}", provider, exc)
+            return
+
+        for i in range(0, len(pcm), _FRAME_BYTES):
+            if writer.is_closing():
+                return
+            chunk = pcm[i : i + _FRAME_BYTES]
+            if len(chunk) < _FRAME_BYTES:
+                chunk = chunk + b"\x00" * (_FRAME_BYTES - len(chunk))
+            try:
+                await _write_frame(writer, KIND_AUDIO, chunk)
+            except (ConnectionResetError, BrokenPipeError):
+                return
+            await asyncio.sleep(0.02)  # real-time pacing so Asterisk's jitter buffer doesn't overrun
+    finally:
+        if guard is not None:
+            guard.stop()
 
 
 def _decode_to_slin8k(audio_bytes: bytes) -> bytes:
@@ -190,11 +226,49 @@ def _company_dept_intro(branding, department: str) -> str:
     return _DEPT_INTROS.get(department, f"Hi, this is {_DEPT_LABELS.get(department, department.replace('_', ' ').title())}. How can I help you?")
 
 
-async def _play_greeting(writer: asyncio.StreamWriter, lock: asyncio.Lock, tenant_id: str = "default") -> None:
+async def _play_greeting(
+    writer: asyncio.StreamWriter,
+    lock: asyncio.Lock,
+    tenant_id: str = "default",
+    session_id: str | None = None,
+    user_id: str = "sip-caller",
+    guard: "_DuplexGuard | None" = None,
+) -> None:
     branding = await _get_branding(tenant_id)
     greeting = _company_greeting(branding, "reception")
     async with lock:
-        await _play_text(writer, greeting)
+        await _play_text(writer, greeting, guard=guard)
+
+    # Record the greeting as the Reception agent's opening line so the very
+    # next LLM turn knows an introduction has ALREADY happened (first_turn is
+    # computed from prior AGENT messages in memory). Without this, the model
+    # saw an empty history and re-introduced/re-greeted itself on the
+    # caller's first real utterance -- sounding like the call "switched back
+    # to reception" before the caller had even finished a sentence.
+    if session_id:
+        try:
+            from app.memory.manager import memory_manager
+            from app.models.schemas import Message, Role, SessionContext
+
+            memory = memory_manager()
+            ctx = SessionContext(
+                session_id=session_id,
+                user_id=user_id,
+                tenant_id=tenant_id,
+                channel="voice",
+                department=Department.RECEPTION,
+            )
+            await memory.record_message(
+                ctx,
+                Message(
+                    session_id=session_id,
+                    role=Role.AGENT,
+                    content=greeting,
+                    department=Department.RECEPTION,
+                ),
+            )
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("AudioSocket: failed to record greeting in memory: {}", exc)
 
 
 _DEPT_LABELS = {
@@ -220,11 +294,19 @@ async def _process_utterance(
     session: object,
     session_id: str,
     lock: asyncio.Lock,
+    guard: "_DuplexGuard | None" = None,
 ) -> None:
     from app.api.ws.voice_ws import _stt  # local import avoids circular import at module load
 
     transcript = await _stt(audio_bytes, sample_rate=8_000)
     if not transcript or writer.is_closing():
+        return
+
+    # Guard against short/garbled STT artifacts (often the tail of the bot's
+    # own TTS leaking through the trunk, or a caught breath/click) being
+    # treated as a real question -- these caused spurious "resets" back to a
+    # department intro instead of natural back-and-forth conversation.
+    if len(transcript.strip()) < 2:
         return
 
     dept_raw  = getattr(session, "department", "reception")
@@ -251,7 +333,7 @@ async def _process_utterance(
         if writer.is_closing():
             return
         async with lock:
-            await _play_text(writer, "I'm sorry, there was an error. Please try again.")
+            await _play_text(writer, "I'm sorry, there was an error. Please try again.", guard=guard)
         return
 
     if writer.is_closing():
@@ -282,10 +364,10 @@ async def _process_utterance(
             # Speak immediately so there's never dead air while the transfer
             # + follow-up LLM call are being prepared (previously the caller
             # heard a few seconds of silence here).
-            await _play_text(writer, handoff)
+            await _play_text(writer, handoff, guard=guard)
             if writer.is_closing():
                 return
-            await _play_text(writer, _company_dept_intro(branding, new_dept))
+            await _play_text(writer, _company_dept_intro(branding, new_dept), guard=guard)
 
         # Don't reuse the caller's original utterance (e.g. "transfer me to
         # sales") as a question for the new department -- that caused the
@@ -322,6 +404,11 @@ async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.Stream
     # frames to the same TCP transport at once (was causing garbled audio).
     playback_lock = asyncio.Lock()
     background_tasks: set[asyncio.Task] = set()
+    # Half-duplex guard: while the bot is speaking (+ a short tail), inbound
+    # audio frames are ignored by the VAD/utterance loop instead of being
+    # treated as caller speech. Fixes the bot "hearing itself" via trunk
+    # echo and re-greeting/re-introducing mid-conversation.
+    duplex_guard = _DuplexGuard()
 
     def _spawn(coro) -> None:
         task = asyncio.create_task(coro)
@@ -348,7 +435,7 @@ async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.Stream
                         department=Department.RECEPTION,
                     )
                     session_id = session.session_id
-                    _spawn(_play_greeting(writer, playback_lock))
+                    _spawn(_play_greeting(writer, playback_lock, session_id=session_id, user_id=session.user_id, guard=duplex_guard))
                 except Exception as exc:  # noqa: BLE001
                     logger.exception("AudioSocket session open failed: {}", exc)
                     break
@@ -357,6 +444,14 @@ async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.Stream
                 if session is None:
                     continue
                 now = asyncio.get_event_loop().time()
+
+                # Half-duplex: while the bot is speaking (+ tail_guard), drop
+                # inbound frames entirely so trunk/line echo of our own TTS
+                # is never mistaken for caller speech (was causing spurious
+                # re-greetings / department resets mid-call).
+                if duplex_guard.is_muted(now):
+                    continue
+
                 vad_result = vad.process_pcm16_bytes(payload)
 
                 if vad_result.is_speech:
@@ -370,7 +465,7 @@ async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.Stream
                         audio_buffer.clear()
                         in_utterance = False
                         _spawn(
-                            _process_utterance(writer, utterance, session, session_id, playback_lock)
+                            _process_utterance(writer, utterance, session, session_id, playback_lock, guard=duplex_guard)
                         )
 
                 if len(audio_buffer) >= _MAX_BUFFER_BYTES:
@@ -378,7 +473,7 @@ async def handle_connection(reader: asyncio.StreamReader, writer: asyncio.Stream
                     audio_buffer.clear()
                     in_utterance = False
                     _spawn(
-                        _process_utterance(writer, utterance, session, session_id, playback_lock)
+                        _process_utterance(writer, utterance, session, session_id, playback_lock, guard=duplex_guard)
                     )
 
             elif kind == KIND_ERROR:
