@@ -1,10 +1,19 @@
-"""Email / marketing MCP server (mock SendGrid / Mailchimp / Resend)."""
+"""Email / marketing MCP server.
+
+``email_send`` performs a REAL delivery via Resend/SMTP (using the same
+provider stack as ``notification_service``) whenever those credentials are
+configured in Settings; otherwise it falls back to an in-memory mock record
+so the tool still works in dev/demo environments without email credentials.
+Campaign management tools remain mocked (no real ESP integration).
+"""
 from __future__ import annotations
 import uuid
 from datetime import datetime, timezone
 from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
+
+from app.core.logging import logger
 
 router = APIRouter(prefix="/mcp/email", tags=["mcp-email"])
 
@@ -24,11 +33,40 @@ _TOOLS = [
 ]
 
 
-def _send_email(args: dict) -> Any:
-    record = {"id": uuid.uuid4().hex[:8], "to": args["to"], "subject": args["subject"],
-              "sent_at": datetime.now(timezone.utc).isoformat(), "status": "delivered"}
+async def _send_email(args: dict) -> Any:
+    """Send a real transactional email when Resend/SMTP is configured.
+
+    Falls back to an in-memory mock record (no real delivery) when no
+    email provider credentials are present, so the tool keeps working in
+    dev/demo environments.
+    """
+    to_addr = args["to"]
+    subject = args["subject"]
+    body = args.get("body", "")
+    message_id = uuid.uuid4().hex[:8]
+    provider = "mock"
+    delivered = False
+
+    try:
+        from app.core.config import settings
+        resend_key = settings.resend_api_key
+        smtp_host = settings.smtp_host
+        if resend_key or smtp_host:
+            from app.services.notification_service import send_generic_email
+            result = await send_generic_email(to_addr, subject, body)
+            delivered = bool(result.get("sent"))
+            provider = result.get("provider", "unknown") if delivered else "mock"
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("Real email send failed, recording as mock: {}", exc)
+
+    record = {
+        "id": message_id, "to": to_addr, "subject": subject,
+        "sent_at": datetime.now(timezone.utc).isoformat(),
+        "status": "delivered" if delivered else "recorded_only",
+        "provider": provider,
+    }
     _sent.append(record)
-    return {"sent": True, "message_id": record["id"], "to": args["to"]}
+    return {"sent": True, "delivered": delivered, "provider": provider, "message_id": message_id, "to": to_addr}
 
 def _list_campaigns(args: dict) -> Any:
     camps = list(_campaigns.values())
@@ -72,7 +110,11 @@ async def mcp_handler(req: RPCRequest) -> dict:
         if not impl:
             return {"jsonrpc": "2.0", "id": req.id, "error": {"code": -32601, "message": f"Unknown tool: {name!r}"}}
         try:
-            return {"jsonrpc": "2.0", "id": req.id, "result": {"content": [{"type": "text", "text": str(impl(args))}], "isError": False}}
+            import inspect
+            result = impl(args)
+            if inspect.isawaitable(result):
+                result = await result
+            return {"jsonrpc": "2.0", "id": req.id, "result": {"content": [{"type": "text", "text": str(result)}], "isError": False}}
         except Exception as exc:
             return {"jsonrpc": "2.0", "id": req.id, "result": {"content": [{"type": "text", "text": str(exc)}], "isError": True}}
     return {"jsonrpc": "2.0", "id": req.id, "error": {"code": -32601, "message": f"Method not found: {req.method!r}"}}

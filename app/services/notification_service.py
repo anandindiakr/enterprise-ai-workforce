@@ -82,6 +82,65 @@ async def send_escalation_email(
     return {"sent": False, "reason": "no_provider_configured"}
 
 
+async def send_generic_email(to_addr: str, subject: str, body: str) -> dict[str, Any]:
+    """Send a plain transactional email (used by agent-triggered sends).
+
+    Tries Resend HTTP API first, then SMTP fallback. Body is treated as
+    plain text and wrapped in a minimal HTML shell.
+    """
+    body_html = (
+        "<div style=\"font-family:sans-serif;max-width:600px;margin:auto;"
+        "white-space:pre-wrap;\">" + body.replace("<", "&lt;").replace(">", "&gt;") + "</div>"
+    )
+
+    resend_key = settings.resend_api_key or os.getenv("RESEND_API_KEY", "")
+    if resend_key:
+        try:
+            import aiohttp  # type: ignore
+            async with aiohttp.ClientSession() as sess:
+                resp = await sess.post(
+                    "https://api.resend.com/emails",
+                    headers={"Authorization": f"Bearer {resend_key}", "Content-Type": "application/json"},
+                    json={
+                        "from": settings.email_from or "noreply@workforce.ai",
+                        "to": [to_addr],
+                        "subject": subject,
+                        "html": body_html,
+                        "text": body,
+                    },
+                )
+                if resp.status in (200, 201):
+                    data = await resp.json()
+                    logger.info("Email sent via Resend to {}: {}", to_addr, data.get("id"))
+                    return {"sent": True, "provider": "resend", "message_id": data.get("id")}
+                err = await resp.text()
+                logger.warning("Resend failed ({}): {}", resp.status, err)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Resend exception: {}", exc)
+
+    smtp_host = settings.smtp_host or os.getenv("SMTP_HOST", "")
+    if smtp_host:
+        try:
+            _send_smtp(
+                host=smtp_host,
+                port=int(settings.smtp_port or 587),
+                user=settings.smtp_user or "",
+                password=settings.smtp_password or "",
+                from_addr=settings.email_from or "noreply@workforce.ai",
+                to_addr=to_addr,
+                subject=subject,
+                body_text=body,
+                body_html=body_html,
+            )
+            logger.info("Email sent via SMTP to {}", to_addr)
+            return {"sent": True, "provider": "smtp"}
+        except Exception as exc:  # noqa: BLE001
+            logger.error("SMTP send failed: {}", exc)
+            return {"sent": False, "reason": str(exc)}
+
+    return {"sent": False, "reason": "no_provider_configured"}
+
+
 async def send_password_reset_email(to_email: str, reset_token: str) -> dict:
     """Send a password-reset link email."""
     frontend_url = os.getenv("FRONTEND_URL", "http://localhost:3000")

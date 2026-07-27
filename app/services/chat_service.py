@@ -172,6 +172,18 @@ async def _db_category_kb_context(category: str, tenant_id: str | None, *, k: in
         return []
 
 
+_PRODUCT_QUERY_KEYWORDS = {
+    "product", "products", "service", "services", "offer", "offers", "offering",
+    "offerings", "catalog", "catalogue", "sell", "sells", "selling", "range",
+    "pricing", "prices", "price", "menu", "portfolio", "solutions", "items",
+}
+
+
+def _is_product_query(query: str) -> bool:
+    words = set(re.findall(r"[a-z]+", query.lower()))
+    return bool(words & _PRODUCT_QUERY_KEYWORDS)
+
+
 async def _retrieve_kb_context(
     query: str,
     tenant_id: str | None = None,
@@ -185,8 +197,11 @@ async def _retrieve_kb_context(
     1.  Category-pin  – fetch up to k/2 docs from the agent's own KB category
         so department-specific content (products, policies, etc.) ALWAYS
         surfaces even when the query doesn't semantically match all of them.
-    2.  Semantic/keyword search – pull the top-k query-matched snippets.
-    3.  Merge  – category-pinned first, then query-matched, deduped, capped at k.
+    2.  Product-query pin – if the caller is asking about products/services,
+        pull EVERY "Products" catalog document (uncapped) so the agent can
+        list the full catalog instead of only the top few semantic matches.
+    3.  Semantic/keyword search – pull the top-k query-matched snippets.
+    4.  Merge  – pinned snippets first, then query-matched, deduped, capped.
     """
     # Category-pinned docs for this department
     dept_cat = _DEPT_CATEGORY_MAP.get(str(department or "").lower())
@@ -194,21 +209,31 @@ async def _retrieve_kb_context(
     if dept_cat:
         dept_snippets = await _db_category_kb_context(dept_cat, tenant_id, k=min(4, k // 2))
 
+    # If the caller is asking about products/services, pin the FULL catalog
+    # (not just a handful) so the agent never omits products from the list.
+    product_snippets: list[str] = []
+    is_product_query = _is_product_query(query)
+    if is_product_query:
+        product_snippets = await _db_category_kb_context("Products", tenant_id, k=100)
+
     # Semantic retrieval (vector first, keyword fallback)
     query_snippets = _vector_kb_context(query, tenant_id, k)
     if not query_snippets:
         query_snippets = await _db_keyword_kb_context(query, tenant_id, k)
 
-    # Merge deduped (dept-specific wins any tie)
+    # Merge deduped (pinned snippets win any tie)
     seen: set[str] = set()
     merged: list[str] = []
-    for snippet in dept_snippets + query_snippets:
+    for snippet in dept_snippets + product_snippets + query_snippets:
         key = snippet[:120]
         if key not in seen:
             seen.add(key)
             merged.append(snippet)
 
-    return "\n\n".join(merged[:k])
+    # Uncap the result when it's a product listing query so the full catalog
+    # reaches the model instead of being truncated to the default k.
+    effective_cap = max(k, len(product_snippets) + len(dept_snippets)) if is_product_query else k
+    return "\n\n".join(merged[:effective_cap])
 
 
 class ChatService:
