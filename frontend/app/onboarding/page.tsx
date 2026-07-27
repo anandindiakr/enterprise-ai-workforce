@@ -6,7 +6,7 @@ import {
   Rocket, Building2, PackagePlus, MessageSquareText, CheckCircle2,
   ArrowRight, ArrowLeft, SkipForward, Trash2, Sparkles, PartyPopper,
 } from "lucide-react";
-import { getToken } from "@/lib/auth";
+import { getToken, apiFetch } from "@/lib/auth";
 
 const API = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
@@ -57,7 +57,7 @@ export default function OnboardingWizard() {
 
   const loadExisting = useCallback(async () => {
     try {
-      const res = await fetch(`${API}/api/v1/settings/company`, { headers: authHeaders() });
+      const res = await apiFetch(`${API}/api/v1/settings/company`, { headers: authHeaders() });
       if (!res.ok) return;
       const d = await res.json();
       setCompanyName(d.company_name || "");
@@ -82,7 +82,7 @@ export default function OnboardingWizard() {
   // Returns true on success so callers (Next / Skip) can decide what to do.
   async function persistCompanyInfo(): Promise<boolean> {
     if (!companyName.trim() && !tagline.trim() && !website.trim()) return true; // nothing to save
-    const res = await fetch(`${API}/api/v1/settings/company`, {
+    const res = await apiFetch(`${API}/api/v1/settings/company`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ company_name: companyName, company_tagline: tagline, company_website: website }),
@@ -125,7 +125,7 @@ export default function OnboardingWizard() {
     let saved = 0;
     let ok = true;
     for (const p of pending) {
-      const res = await fetch(`${API}/api/v1/products`, {
+      const res = await apiFetch(`${API}/api/v1/products`, {
         method: "POST",
         headers: { "Content-Type": "application/json", ...authHeaders() },
         body: JSON.stringify({ name: p.name, description: p.description, price: p.price || null, category: "General", is_active: true }),
@@ -158,7 +158,7 @@ export default function OnboardingWizard() {
       ...existingOverrides,
       reception: { display_name: "", greeting, closing, transfer_message: transferMsg, script: "" },
     };
-    const res = await fetch(`${API}/api/v1/settings/company`, {
+    const res = await apiFetch(`${API}/api/v1/settings/company`, {
       method: "PUT",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({
@@ -186,7 +186,7 @@ export default function OnboardingWizard() {
   async function finishOnboarding() {
     setSaving(true); setError("");
     try {
-      const res = await fetch(`${API}/api/v1/settings/onboarding/complete`, {
+      const res = await apiFetch(`${API}/api/v1/settings/onboarding/complete`, {
         method: "POST", headers: authHeaders(),
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);

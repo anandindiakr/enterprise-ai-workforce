@@ -92,3 +92,88 @@ export async function tryRefreshToken(): Promise<string | null> {
     return null;
   }
 }
+
+// Avoid firing multiple concurrent refresh requests when several API calls
+// hit a 401 at the same time (e.g. a page that fires several fetches on load).
+let _refreshInFlight: Promise<string | null> | null = null;
+function refreshOnce(): Promise<string | null> {
+  if (!_refreshInFlight) {
+    _refreshInFlight = tryRefreshToken().finally(() => { _refreshInFlight = null; });
+  }
+  return _refreshInFlight;
+}
+
+/**
+ * Authenticated fetch wrapper. Attaches the bearer token automatically and,
+ * if the server responds 401 (access token expired), transparently swaps in
+ * a fresh token via the refresh token and retries the request ONCE. If the
+ * refresh also fails, the stored session is cleared and the user is sent to
+ * /login instead of leaving pages stuck showing a generic "Failed to save".
+ */
+export async function apiFetch(input: string, init: RequestInit = {}): Promise<Response> {
+  const doFetch = (token: string | null) => {
+    const headers: Record<string, string> = {
+      ...(init.headers as Record<string, string> | undefined),
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    };
+    return fetch(input, { ...init, headers });
+  };
+
+  let res = await doFetch(getToken());
+
+  if (res.status === 401 && getRefreshToken()) {
+    const newToken = await refreshOnce();
+    if (newToken) {
+      res = await doFetch(newToken);
+    } else if (typeof window !== "undefined") {
+      clearAuth();
+      window.location.href = "/login";
+    }
+  }
+
+  return res;
+}
+
+let _fetchPatched = false;
+
+/**
+ * Installs a global window.fetch interceptor so EVERY call site in the app
+ * (most pages call `fetch()` directly with `authHeaders()`, not `apiFetch`)
+ * benefits from automatic token-refresh-and-retry on 401, without having to
+ * touch every page. This is the fix for the whole class of "intermittent"
+ * errors (onboarding "Failed to save", portal/monitoring/admin errors, etc.)
+ * that only appear after the 1-hour access token has quietly expired.
+ *
+ * Safe to call multiple times; only patches once. Only intercepts requests
+ * carrying an `Authorization: Bearer` header, so public endpoints (login,
+ * forgot-password, health checks) are never touched or looped.
+ */
+export function installFetchInterceptor(): void {
+  if (typeof window === "undefined" || _fetchPatched) return;
+  _fetchPatched = true;
+
+  const originalFetch = window.fetch.bind(window);
+
+  window.fetch = async (input: RequestInfo | URL, init?: RequestInit) => {
+    const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
+    const hadAuthHeader = headers.has("Authorization");
+
+    let res = await originalFetch(input, init);
+
+    if (res.status === 401 && hadAuthHeader && getRefreshToken()) {
+      const newToken = await refreshOnce();
+      if (newToken) {
+        headers.set("Authorization", `Bearer ${newToken}`);
+        const retryInit: RequestInit = { ...init, headers };
+        res = await originalFetch(input, retryInit);
+      } else {
+        clearAuth();
+        if (!window.location.pathname.startsWith("/login")) {
+          window.location.href = "/login";
+        }
+      }
+    }
+
+    return res;
+  };
+}

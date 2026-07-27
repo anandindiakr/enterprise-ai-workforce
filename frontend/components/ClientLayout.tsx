@@ -5,13 +5,20 @@
  * the Sidebar (hidden on public/fullscreen pages like /welcome and /login).
  */
 
+import { useEffect } from "react";
 import { AuthGuard, useIsSidebarVisible } from "@/components/AuthGuard";
 import { Sidebar } from "@/components/Sidebar";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { NotificationBell } from "@/components/NotificationBell";
+import { installFetchInterceptor } from "@/lib/auth";
 
 export function ClientLayout({ children }: { children: React.ReactNode }) {
   const showSidebar = useIsSidebarVisible();
+
+  // Install once, app-wide: transparently refreshes an expired access token
+  // and retries the request instead of every page failing silently after
+  // the 1-hour token lifetime with a generic "Failed to save" error.
+  useEffect(() => { installFetchInterceptor(); }, []);
 
   return (
     <AuthGuard>

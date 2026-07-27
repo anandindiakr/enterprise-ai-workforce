@@ -23,6 +23,11 @@ const syne = Syne({
 export const metadata: Metadata = {
   title: "AI Workforce Platform",
   description: "Enterprise multi-agent AI workforce with chat & real-time voice.",
+  icons: {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    shortcut: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/icon.svg", type: "image/svg+xml" }],
+  },
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
