@@ -33,7 +33,7 @@ async def _fetch_company_context(tenant_id: str = "default") -> dict:
     assistant prompt and first message match what's configured in the UI."""
     sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
     from app.core.company import get_company_branding
-    from app.db.session import get_session_factory
+    from app.db.session import AsyncSessionLocal
     from app.db.models import ProductModel
     from sqlalchemy import select
 
@@ -49,8 +49,7 @@ async def _fetch_company_context(tenant_id: str = "default") -> dict:
 
     products: list[str] = []
     try:
-        session_factory = get_session_factory()
-        async with session_factory() as db:
+        async with AsyncSessionLocal() as db:
             rows = (await db.execute(select(ProductModel).where(ProductModel.tenant_id == tenant_id))).scalars().all()
             products = [f"{p.name}: {p.description or ''}".strip() for p in rows]
     except Exception as exc:  # noqa: BLE001
