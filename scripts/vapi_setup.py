@@ -121,7 +121,7 @@ def _build_assistant_payload(server_url: str, context: dict) -> dict:
                 },
             ],
         },
-        "voice": {"provider": "playht", "voiceId": "jennifer"},
+        "voice": {"provider": "vapi", "voiceId": "Paige"},
         "serverUrl": server_url,
         "serverMessages": ["tool-calls", "end-of-call-report"],
         "endCallFunctionEnabled": True,
