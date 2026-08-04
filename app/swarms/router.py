@@ -12,6 +12,7 @@ dispatches a task. The router:
 from __future__ import annotations
 
 import asyncio
+import re
 import time
 from dataclasses import dataclass
 
@@ -63,9 +64,14 @@ class WorkforceRouter:
     def choose_strategy(
         self, task: str, department: Department | None
     ) -> SwarmStrategy:
-        text = task.lower()
+        # Word-boundary match only, and only against the *first line* of the
+        # task (the raw user utterance) -- injected KB/action context below
+        # it (e.g. product docs mentioning "pricing plans", or an action
+        # summary containing "explanation") must never accidentally flip a
+        # simple department reply into a multi-agent Hierarchical run.
+        text = task.split("\n", 1)[0].lower()
         for kw, strat in _COMPLEXITY_KEYWORDS.items():
-            if kw in text:
+            if re.search(rf"\b{re.escape(kw)}\b", text):
                 return strat
         # Cross-department or ambiguous tasks favor hierarchical control.
         if department in (None, Department.EXECUTIVE):
@@ -146,11 +152,24 @@ class WorkforceRouter:
                 duration_ms = int((time.perf_counter() - start) * 1000)
                 swarm_executions_total.labels(plan.strategy.value, plan.department.value).inc()
                 from app.core.agent_output import extract_agent_text
-                clean_output = extract_agent_text(str(output) if output is not None else "", task=request.task)
+                # Pass the raw object (not str(output)) -- extract_agent_text
+                # handles list/dict conversation dumps directly and only
+                # falls back to string-repr parsing when it has no choice.
+                clean_output = extract_agent_text(output, task=request.task)
+                if not clean_output:
+                    logger.warning(
+                        "extract_agent_text produced no clean reply for department={}; "
+                        "returning a safe fallback instead of raw output",
+                        plan.department.value,
+                    )
+                    clean_output = (
+                        "I'm sorry, I couldn't put together a clear response for that. "
+                        "Could you rephrase your request?"
+                    )
                 return WorkflowResult(
                     department=plan.department,
                     strategy=plan.strategy,
-                    output=clean_output or str(output),
+                    output=clean_output,
                     duration_ms=duration_ms,
                     agents_involved=[a.agent_name for a in plan.agents],
                     succeeded=True,
