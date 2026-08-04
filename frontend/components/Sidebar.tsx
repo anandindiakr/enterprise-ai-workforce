@@ -34,6 +34,7 @@ import {
   Shield,
   PackagePlus,
   Rocket,
+  Network,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { clearAuth, getUser, type AuthUser } from "@/lib/auth";
@@ -45,6 +46,7 @@ const NAV = [
   { href: "/voice", icon: Mic, label: "Voice Console" },
   { href: "/agents", icon: Brain, label: "Agents" },
   { href: "/workflows", icon: GitBranch, label: "Workflows" },
+  { href: "/orchestration", icon: Network, label: "Live Orchestration", adminOnly: true },
   { href: "/products", icon: PackagePlus, label: "Products & Services", adminOnly: true },
   { href: "/analytics", icon: BarChart3, label: "Analytics" },
   { href: "/escalations", icon: AlertTriangle, label: "Escalations" },

@@ -116,6 +116,7 @@ class AppSettings(BaseSettings):
     vapi_api_key: str = ""          # Vapi private API key (server-side, for assistant sync)
     vapi_webhook_secret: str = ""   # verifies X-Vapi-Signature on inbound webhooks
     vapi_assistant_id: str = ""     # assistant created via scripts/vapi_setup.py
+    vapi_phone_number_id: str = ""  # optional: Vapi phone number resource used as caller ID for outbound calls
 
     # --- MCP integrations ---
     # Defaults point to the built-in mock servers (self-referencing on same app)

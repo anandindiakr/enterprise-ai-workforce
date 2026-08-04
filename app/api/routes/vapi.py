@@ -16,16 +16,53 @@ import hmac
 import os
 from typing import Any
 
-from fastapi import APIRouter, Header, Request
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel
 
+from app.core.broadcast import bus
 from app.core.config import settings
 from app.core.logging import logger
+from app.models.schemas import Principal
+from app.security.auth import get_principal
 from app.services.chat_service import _retrieve_kb_context
 from app.services.notification_service import send_generic_email
+from app.services.telephony_actions import place_outbound_call
 from app.voice import branding
 
 router = APIRouter(prefix="/vapi", tags=["vapi"])
+
+
+class OutboundCallRequest(BaseModel):
+    phone_number: str
+    reason: str = ""
+    department: str = "sales"
+
+
+@router.post("/outbound-call")
+async def trigger_outbound_call(
+    body: OutboundCallRequest,
+    principal: Principal = Depends(get_principal),
+) -> JSONResponse:
+    """Admin/agent-triggered REAL outbound call via Vapi (e.g. a "Call now"
+    button on a Sales lead). Reuses the same assistant that answers inbound
+    calls unless a different one is configured. Requires an authenticated
+    session (any logged-in user) so anonymous callers can't dial out via us.
+    """
+    result = await place_outbound_call(phone_number=body.phone_number, reason=body.reason)
+    import time as _time
+
+    await bus.publish("orchestration", {
+        "type": "outbound_call",
+        "department": body.department,
+        "phone_number": body.phone_number,
+        "success": result.get("success", False),
+        "summary": result.get("summary", ""),
+        "channel": "voice",
+        "ts": _time.time(),
+    })
+    status_code = 200 if result.get("success") else 502
+    return JSONResponse(status_code=status_code, content=result)
 
 
 def _verify_secret(received: str | None) -> bool:
@@ -115,6 +152,19 @@ async def _handle_tool_calls(message: dict[str, Any], tenant_id: str) -> dict[st
         else:
             result_text = f"Unknown tool: {name}"
 
+        import time as _time
+
+        await bus.publish("orchestration", {
+            "type": "tool_call",
+            "department": args.get("department", "reception"),
+            "connector": "vapi",
+            "tool": name,
+            "success": True,
+            "summary": str(result_text)[:200],
+            "channel": "voice",
+            "ts": _time.time(),
+        })
+
         results.append({"toolCallId": call_id, "result": result_text})
 
     return {"results": results}
@@ -168,6 +218,17 @@ async def _handle_end_of_call(message: dict[str, Any], tenant_id: str) -> None:
         return
 
     summary_text = await _generate_call_summary(transcript, summary_field)
+
+    import time as _time
+
+    await bus.publish("orchestration", {
+        "type": "call_ended",
+        "department": "reception",
+        "phone_number": customer_number,
+        "summary": summary_text[:300],
+        "channel": "voice",
+        "ts": _time.time(),
+    })
 
     to_addr = settings.escalation_email_to or os.getenv("ESCALATION_EMAIL_TO", "")
     if not to_addr:

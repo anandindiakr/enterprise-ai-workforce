@@ -5,9 +5,13 @@ import Link from "next/link";
 import {
   Star, Headphones, ShoppingCart, Users, DollarSign,
   Cpu, Megaphone, MessageSquare, Mic, Activity,
-  Zap, Shield, Brain, ChevronRight, RefreshCw,
+  Zap, Shield, Brain, ChevronRight, RefreshCw, PhoneOutgoing, X,
 } from "lucide-react";
 import { authHeaders } from "@/lib/auth";
+
+/* Departments allowed to place a REAL outbound call via Vapi (must match
+ * app/services/action_dispatcher.py `_OUTBOUND_CALL_DEPARTMENTS`). */
+const OUTBOUND_CALL_DEPARTMENTS = new Set(["sales", "marketing", "customer_care"]);
 
 /* ── Types ───────────────────────────────────────────────── */
 
@@ -67,6 +71,45 @@ export default function AgentsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [callTarget, setCallTarget] = useState<AgentInfo | null>(null);
+  const [callPhone, setCallPhone] = useState("");
+  const [callReason, setCallReason] = useState("");
+  const [callSubmitting, setCallSubmitting] = useState(false);
+  const [callResult, setCallResult] = useState<{ success: boolean; summary: string } | null>(null);
+
+  async function submitCall() {
+    if (!callTarget || !callPhone.trim()) return;
+    setCallSubmitting(true);
+    setCallResult(null);
+    try {
+      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+      const res = await fetch(`${apiBase}/api/v1/vapi/outbound-call`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({
+          phone_number: callPhone.trim(),
+          reason: callReason.trim(),
+          department: callTarget.department,
+        }),
+      });
+      const data = await res.json().catch(() => ({}));
+      setCallResult({
+        success: res.ok && data.success !== false,
+        summary: data.summary || (res.ok ? "Call placed." : "Could not place the call."),
+      });
+    } catch {
+      setCallResult({ success: false, summary: "Network error — could not reach the backend." });
+    } finally {
+      setCallSubmitting(false);
+    }
+  }
+
+  function closeCallModal() {
+    setCallTarget(null);
+    setCallPhone("");
+    setCallReason("");
+    setCallResult(null);
+  }
 
   async function load(showRefresh = false) {
     if (showRefresh) setRefreshing(true);
@@ -225,6 +268,15 @@ export default function AgentsPage() {
                             <Mic className="h-2.5 w-2.5" />
                           </Link>
                         )}
+                        {OUTBOUND_CALL_DEPARTMENTS.has(agent.department) && (
+                          <button
+                            onClick={() => setCallTarget(agent)}
+                            title="Place a real outbound call via Vapi"
+                            className="flex items-center gap-1 rounded-lg border border-[#1f2937] px-2.5 py-1 text-[10px] text-slate-500 transition-all hover:border-emerald-500/40 hover:text-emerald-400"
+                          >
+                            <PhoneOutgoing className="h-2.5 w-2.5" />
+                          </button>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -241,6 +293,59 @@ export default function AgentsPage() {
           </div>
         )}
       </div>
+
+      {/* Outbound call modal */}
+      {callTarget && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
+          <div className="w-full max-w-sm rounded-xl border border-[#1f2937] bg-[#0c111d] p-5 shadow-2xl">
+            <div className="mb-4 flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <PhoneOutgoing className="h-4 w-4 text-emerald-400" />
+                <h3 className="text-sm font-semibold text-slate-100">
+                  Call lead as {callTarget.agent_name}
+                </h3>
+              </div>
+              <button onClick={closeCallModal} className="text-slate-500 hover:text-slate-300">
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+            <p className="mb-3 text-[11px] text-slate-500">
+              Places a real outbound phone call via Vapi using the {callTarget.department.replace("_", " ")} assistant.
+            </p>
+            <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">Phone number (E.164)</label>
+            <input
+              value={callPhone}
+              onChange={(e) => setCallPhone(e.target.value)}
+              placeholder="+6591234567"
+              className="mb-3 w-full rounded-lg border border-[#1f2937] bg-[#070d1a] px-3 py-2 text-sm text-slate-200 outline-none focus:border-emerald-500/50"
+            />
+            <label className="mb-1 block text-[10px] uppercase tracking-wide text-slate-500">Reason (optional)</label>
+            <input
+              value={callReason}
+              onChange={(e) => setCallReason(e.target.value)}
+              placeholder="Follow up on demo request"
+              className="mb-4 w-full rounded-lg border border-[#1f2937] bg-[#070d1a] px-3 py-2 text-sm text-slate-200 outline-none focus:border-emerald-500/50"
+            />
+            {callResult && (
+              <div className={`mb-3 rounded-lg border px-3 py-2 text-[11px] ${callResult.success ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300" : "border-rose-500/30 bg-rose-500/10 text-rose-300"}`}>
+                {callResult.summary}
+              </div>
+            )}
+            <div className="flex justify-end gap-2">
+              <button onClick={closeCallModal} className="rounded-lg border border-[#1f2937] px-3 py-1.5 text-xs text-slate-400 hover:text-slate-200">
+                Close
+              </button>
+              <button
+                onClick={submitCall}
+                disabled={callSubmitting || !callPhone.trim()}
+                className="flex items-center gap-1.5 rounded-lg bg-emerald-500/90 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-500 disabled:opacity-50"
+              >
+                {callSubmitting ? "Calling…" : "Place call"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

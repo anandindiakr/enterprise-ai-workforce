@@ -15,6 +15,7 @@ from app.models.schemas import (
     ChatResponse,
     Message,
     SessionContext,
+    ToolCall,
     WorkflowRequest,
 )
 from app.swarms.router import workforce_router
@@ -302,6 +303,16 @@ class ChatService:
 
         start = time.perf_counter()
         try:
+            from app.core.broadcast import bus
+
+            await bus.publish("orchestration", {
+                "type": "agent_active",
+                "department": department.value,
+                "session_id": session_id,
+                "channel": "chat",
+                "ts": time.time(),
+            })
+
             # Augment the task with relevant knowledge-base context (RAG) so
             # agents (esp. Sales/Marketing/Care) can answer about uploaded
             # products, policies and documents.
@@ -312,6 +323,21 @@ class ChatService:
                     f"{request.message}\n\n"
                     f"[Enterprise knowledge base — use to answer accurately]\n{kb}"
                 )
+
+            # Real actions: let the agent actually DO something (CRM/ticket/
+            # calendar/email/outbound-call/social-draft) instead of only
+            # talking. Never blocks/fails the turn — degrades to no-op.
+            from app.services.action_dispatcher import dispatch as dispatch_actions
+
+            action_context, action_results = await dispatch_actions(
+                department=department,
+                message=request.message,
+                session_id=session_id,
+                tenant_id=request.tenant_id,
+                user_id=request.user_id,
+            )
+            if action_context:
+                task = f"{task}\n\n{action_context}"
 
             wf = await router.execute(
                 WorkflowRequest(
@@ -350,6 +376,16 @@ class ChatService:
                 escalations_total.labels(department.value, escalation.value).inc()
             final_dept = transferred or department
 
+            if transferred is not None:
+                await bus.publish("orchestration", {
+                    "type": "handoff",
+                    "from_department": department.value,
+                    "to_department": transferred.value,
+                    "session_id": session_id,
+                    "channel": "chat",
+                    "ts": time.time(),
+                })
+
             # If a control directive stripped the entire message, synthesise a
             # natural phrase: a handoff line for a real transfer, otherwise an
             # in-department acknowledgement (so the reply is never blank).
@@ -382,6 +418,14 @@ class ChatService:
                 department=final_dept,
                 escalation=escalation,
                 transferred_to=transferred,
+                tool_calls=[
+                    ToolCall(
+                        name=f"{r.connector}.{r.tool}",
+                        result=r.summary,
+                        success=r.success,
+                    )
+                    for r in action_results
+                ],
             )
         except Exception as exc:
             chat_requests_total.labels(department.value, "error").inc()

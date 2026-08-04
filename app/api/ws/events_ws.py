@@ -26,7 +26,7 @@ from app.core.broadcast import bus
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-_SUPPORTED_CHANNELS = {"escalations", "workflows", "voice_sessions", "audit"}
+_SUPPORTED_CHANNELS = {"escalations", "workflows", "voice_sessions", "audit", "orchestration"}
 _PING_INTERVAL = 20  # seconds
 
 
