@@ -54,8 +54,8 @@ const DEPTS: { id: string; label: string; icon: React.ElementType; color: string
   { id: "marketing",     label: "Marketing",     icon: Megaphone,    color: "#fb923c", y: 500 },
 ];
 
-const ACTIVE_MS = 4000;   // how long a "just happened" node/edge stays highlighted
-const TOOL_TTL_MS = 7000; // how long a transient tool node stays on the canvas
+const ACTIVE_MS = 20000;  // how long a "just happened" node/edge stays highlighted
+const TOOL_TTL_MS = 30000; // how long a transient tool node stays on the canvas
 
 function baseNodes(): Node[] {
   const source: Node = {

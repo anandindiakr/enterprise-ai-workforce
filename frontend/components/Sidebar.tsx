@@ -35,6 +35,7 @@ import {
   PackagePlus,
   Rocket,
   Network,
+  History,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { clearAuth, getUser, type AuthUser } from "@/lib/auth";
@@ -50,6 +51,7 @@ const NAV = [
   { href: "/products", icon: PackagePlus, label: "Products & Services", adminOnly: true },
   { href: "/analytics", icon: BarChart3, label: "Analytics" },
   { href: "/escalations", icon: AlertTriangle, label: "Escalations" },
+  { href: "/conversations", icon: History, label: "Conversation Logs", adminOnly: true },
   { href: "/knowledge", icon: BookOpen, label: "Knowledge Base" },
   { href: "/admin", icon: Shield, label: "Admin Panel", adminOnly: true },
   { href: "/integrations", icon: Plug, label: "Integrations", adminOnly: true },
