@@ -335,6 +335,7 @@ class ChatService:
                 session_id=session_id,
                 tenant_id=request.tenant_id,
                 user_id=request.user_id,
+                history=prior_history,
             )
             if action_context:
                 task = f"{task}\n\n{action_context}"

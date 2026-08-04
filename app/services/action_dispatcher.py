@@ -206,8 +206,14 @@ async def dispatch(
     session_id: str,
     tenant_id: str | None,
     user_id: str | None = None,
+    history: list[Any] | None = None,
 ) -> tuple[str, list[ActionResult]]:
     """Decide + execute any real tool actions warranted by this user turn.
+
+    ``history`` is the recent conversation (most-recent-last), used so a
+    multi-turn action (e.g. "log a ticket" -> agent asks for contact info ->
+    user replies "Anand, +65...") is still recognised on the follow-up turn
+    instead of looking at the latest message in isolation.
 
     Returns ``(context_to_inject, action_results)``. Never raises — on any
     failure it returns ``("", [])`` so the chat flow is unaffected.
@@ -218,11 +224,20 @@ async def dispatch(
 
     openai_key = getattr(settings, "openai_api_key", None) or os.getenv("OPENAI_API_KEY", "")
     if not openai_key:
+        logger.info("Action dispatch skipped: no OPENAI_API_KEY configured")
         return "", []
 
     tools = _mcp_tools_schema(department) + _builtin_tools(department)
     if not tools:
+        logger.info("Action dispatch skipped: no tools available for department={}", department.value)
         return "", []
+
+    history_messages: list[dict[str, str]] = []
+    for msg in (history or [])[-6:]:
+        role = "assistant" if str(getattr(msg, "role", "")).lower() in ("agent", "assistant") else "user"
+        content = str(getattr(msg, "content", "") or "")
+        if content:
+            history_messages.append({"role": role, "content": content[:1000]})
 
     try:
         from openai import AsyncOpenAI
@@ -234,16 +249,21 @@ async def dispatch(
                 {
                     "role": "system",
                     "content": (
-                        "You decide whether the user's latest message requires "
+                        "You decide whether the CURRENT user message — read in "
+                        "the context of the recent conversation below — requires "
                         "calling a backend tool/action right now (e.g. creating a "
                         "CRM lead, opening a support ticket, checking an invoice, "
                         "booking a meeting, placing an outbound call, drafting a "
-                        "social post). Only call a tool when the user is clearly "
-                        "asking for a real action to be taken — not for a general "
-                        "question, opinion, or small talk. If no action is needed, "
-                        "do not call any tool."
+                        "social post). This includes follow-up replies that supply "
+                        "information an earlier agent message asked for (e.g. a "
+                        "name/phone/email given right after the agent said it would "
+                        "log a ticket) — treat that as completing the action. Only "
+                        "call a tool when a real action is clearly warranted — not "
+                        "for a general question, opinion, or small talk. If no "
+                        "action is needed, do not call any tool."
                     ),
                 },
+                *history_messages,
                 {"role": "user", "content": message},
             ],
             tools=tools,
@@ -252,6 +272,10 @@ async def dispatch(
             temperature=0,
         )
         tool_calls = completion.choices[0].message.tool_calls or []
+        logger.info(
+            "Action dispatch decision: department={} tools_available={} tool_calls_chosen={}",
+            department.value, len(tools), [c.function.name for c in tool_calls],
+        )
         if not tool_calls:
             return "", []
 
@@ -283,5 +307,5 @@ async def dispatch(
         context = f"[Actions just taken on your behalf]\n{context_lines}"
         return context, results
     except Exception as exc:  # noqa: BLE001
-        logger.warning("Action dispatch failed for department={}: {}", department.value, exc)
+        logger.exception("Action dispatch failed for department={}: {}", department.value, exc)
         return "", []
