@@ -66,19 +66,24 @@ async def system_stats(
     )
     total_users: int = total_users_row.scalar_one_or_none() or 0
 
-    # Users active today = had a login audit event today
+    # Users active today = had a login today (UserModel.last_login).
+    # (ChatMessageModel has no tenant_id column, and the auth flow updates
+    # last_login rather than writing a login audit event.)
     active_users_row = await db.execute(
-        select(func.count(func.distinct(AuditLogModel.user_id))).where(
-            AuditLogModel.tenant_id == tenant_id,
-            AuditLogModel.action.ilike("%login%"),
-            AuditLogModel.created_at >= today_start,
+        select(func.count(UserModel.id)).where(
+            UserModel.tenant_id == tenant_id,
+            UserModel.last_login >= today_start,
         )
     )
     active_users_today: int = active_users_row.scalar_one_or_none() or 0
 
+    # Messages today: ChatMessageModel is tenant-less, so scope via the
+    # owning chat session (tenant_id lives on ChatSessionModel).
     msgs_today_row = await db.execute(
-        select(func.count(ChatMessageModel.id)).where(
-            ChatMessageModel.tenant_id == tenant_id,
+        select(func.count(ChatMessageModel.id))
+        .join(ChatSessionModel, ChatMessageModel.session_id == ChatSessionModel.id)
+        .where(
+            ChatSessionModel.tenant_id == tenant_id,
             ChatMessageModel.created_at >= today_start,
         )
     )
@@ -105,7 +110,7 @@ async def system_stats(
 
     # Voice sessions
     try:
-        active_voice = len(voice_session_manager.sessions)
+        active_voice = len(voice_session_manager().all())
     except Exception:
         active_voice = 0
 
@@ -126,8 +131,11 @@ async def system_stats(
 
     # Check Redis
     try:
-        from app.memory.cache import redis_client  # type: ignore
-        redis_client.ping()
+        from app.memory.short_term import short_term_memory
+        redis_mem = short_term_memory()
+        if redis_mem._client is None:
+            await redis_mem.connect()
+        await redis_mem.client.ping()
         services.append({"name": "Redis", "status": "healthy", "details": "Connected"})
     except Exception as exc:
         services.append({"name": "Redis", "status": "down", "details": str(exc)[:80]})

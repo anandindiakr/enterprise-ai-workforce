@@ -216,11 +216,14 @@ def execute_workflow(
                 step_agent = step.get("agent", department)
                 step_task  = step.get("task", step.get("description", "Process workflow step"))
                 try:
-                    from app.agents.factory import agent_factory
-                    factory = agent_factory()
-                    response = await factory.run(
-                        department=step_agent,
-                        task=f"[Workflow: {workflow_name}] Step {i}/{len(steps)}: {step_task}\nInputs: {inputs}",
+                    from app.agents.factory import build_department_agent
+                    from app.core.types import Department
+                    # Build the department agent and run it off-thread (agent.run
+                    # is synchronous — same pattern as WorkforceRouter.execute).
+                    agent = build_department_agent(Department(step_agent))
+                    response = await asyncio.to_thread(
+                        agent.run,
+                        f"[Workflow: {workflow_name}] Step {i}/{len(steps)}: {step_task}\nInputs: {inputs}",
                     )
                     results.append({"step": step_name, "status": "success", "output": str(response)[:500]})
                 except Exception as step_exc:  # noqa: BLE001

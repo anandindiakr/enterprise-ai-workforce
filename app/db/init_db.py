@@ -10,7 +10,13 @@ from app.db.crud import (
     create_user,
     get_user_by_username,
     hash_password,
+    verify_password,
 )
+
+# Placeholder values compiled into the app. If the env var still holds one of
+# these, the operator has not configured real credentials yet, so we must NOT
+# overwrite a password that was set through the UI with a placeholder.
+_PLACEHOLDER_PASSWORDS = {"change-me-in-env", "change-me-agent"}
 
 
 async def init_db() -> None:
@@ -22,8 +28,12 @@ async def init_db() -> None:
 
     Behaviour:
     - If the account does NOT exist → create it with the env password.
-    - If the account already exists → leave the password untouched so
-      that admin-initiated password changes survive a container restart.
+    - If the account already exists AND the env password has changed to a
+      real (non-placeholder) value → update the stored hash to match.
+    - If the account already exists AND the stored hash already matches the
+      env password → leave untouched.
+    - If the env password is still a placeholder → never overwrite the stored
+      hash (so a UI-initiated password change survives a restart).
     - Roles and scopes are always kept up to date.
     """
     async with engine.begin() as conn:
@@ -61,13 +71,22 @@ async def init_db() -> None:
             )
             logger.info("Seeded admin user from ADMIN_PASSWORD env var.")
         else:
-            # Keep roles / scopes current; leave password unchanged so that
-            # any password change made in production survives a restart.
+            # Keep roles / scopes current.
             admin.roles = ["admin", "agent"]
             admin.scopes = ["chat", "voice", "workflows", "audit"]
             admin.is_superuser = True
             admin.is_active = True
-            logger.info("Admin account verified (password unchanged).")
+            # Sync password when the env var has changed to a real value.
+            # Placeholder defaults are never used to overwrite the stored hash,
+            # otherwise a UI-set password would be clobbered on every restart.
+            if (
+                settings.admin_password not in _PLACEHOLDER_PASSWORDS
+                and not verify_password(settings.admin_password, admin.hashed_password)
+            ):
+                admin.hashed_password = hash_password(settings.admin_password)
+                logger.info("Admin password updated from ADMIN_PASSWORD env var.")
+            else:
+                logger.info("Admin account verified (password unchanged).")
 
         # ── Agent account ──────────────────────────────────────────────────
         agent = await get_user_by_username(db, "agent")
@@ -85,7 +104,15 @@ async def init_db() -> None:
         else:
             agent.roles = ["agent"]
             agent.is_active = True
-            logger.info("Agent account verified (password unchanged).")
+            # Sync password when the env var has changed to a real value.
+            if (
+                settings.agent_password not in _PLACEHOLDER_PASSWORDS
+                and not verify_password(settings.agent_password, agent.hashed_password)
+            ):
+                agent.hashed_password = hash_password(settings.agent_password)
+                logger.info("Agent password updated from AGENT_PASSWORD env var.")
+            else:
+                logger.info("Agent account verified (password unchanged).")
 
         await db.commit()
 
