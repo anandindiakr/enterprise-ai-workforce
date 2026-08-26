@@ -323,7 +323,7 @@ export default function UserManagementPage() {
       </div>
 
       {/* Table */}
-      <div className="flex-1 overflow-y-auto">
+      <div className="flex-1 overflow-auto">
         {loading && users.length === 0 ? (
           <div className="flex h-40 items-center justify-center">
             <div className="h-6 w-6 animate-spin rounded-full border-2 border-[#1f2937] border-t-amber-500" />
@@ -333,7 +333,7 @@ export default function UserManagementPage() {
             No users found.
           </div>
         ) : (
-          <table className="w-full text-sm">
+          <table className="w-full min-w-[720px] text-sm">
             <thead>
               <tr className="border-b border-[#1f2937] text-[10px] uppercase tracking-widest text-slate-600">
                 <th className="px-6 py-3 text-left">User</th>
@@ -360,10 +360,10 @@ export default function UserManagementPage() {
                       </div>
                     </div>
                   </td>
-                  <td className="px-4 py-3">
-                    <span className="flex items-center gap-1.5 text-slate-400">
+                  <td className="max-w-[260px] px-4 py-3">
+                    <span className="flex min-w-0 items-center gap-1.5 text-slate-400" title={u.email ?? undefined}>
                       <Mail className="h-3 w-3 flex-shrink-0 text-slate-600" />
-                      {u.email || <span className="text-slate-600">—</span>}
+                      <span className="truncate">{u.email || <span className="text-slate-600">—</span>}</span>
                     </span>
                   </td>
                   <td className="px-4 py-3">
@@ -382,7 +382,7 @@ export default function UserManagementPage() {
                       </span>
                     )}
                   </td>
-                  <td className="px-4 py-3 text-right">
+                  <td className="whitespace-nowrap px-4 py-3 text-right">
                     <div className="flex items-center justify-end gap-1">
                       <button
                         onClick={() => setModal({ mode: "edit", user: u })}

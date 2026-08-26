@@ -8,11 +8,12 @@ from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request, status
 from pydantic import BaseModel, field_validator
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.db import crud
-from app.db.models import UserModel
+from app.db.models import TenantModel, UserModel
 from app.models.schemas import Principal, TokenRequest, TokenResponse
 from app.security.auth import create_access_token, get_principal, require_admin
 
@@ -72,6 +73,17 @@ class UserResponse(BaseModel):
     last_login: datetime | None
 
     model_config = {"from_attributes": True}
+
+
+class AdminCreateUserRequest(RegisterRequest):
+    """Admin-only user creation.
+
+    Extends the public registration schema with fields that must never be
+    settable by self-registration: target tenant, roles and active status.
+    """
+    tenant_id: str | None = None
+    roles: list[str] | None = None
+    is_active: bool = True
 
 
 class UpdateUserRequest(BaseModel):
@@ -331,7 +343,7 @@ async def get_user(
 
 @users_router.post("/", response_model=UserResponse, status_code=201)
 async def create_user_admin(
-    payload: RegisterRequest,
+    payload: AdminCreateUserRequest,
     principal: Principal = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> UserResponse:
@@ -339,13 +351,32 @@ async def create_user_admin(
         raise HTTPException(status_code=400, detail="Username already taken")
     if await crud.get_user_by_email(db, payload.email):
         raise HTTPException(status_code=400, detail="Email already registered")
+
+    caller_tenant = principal.tenant_id or "default"
+    target_tenant = payload.tenant_id or caller_tenant
+    if target_tenant != caller_tenant:
+        # Only the platform (default) admin may provision users into another tenant.
+        if caller_tenant != "default":
+            raise HTTPException(status_code=403, detail="Cannot create users in another tenant")
+        tenant_exists = (await db.execute(
+            select(TenantModel.slug).where(TenantModel.slug == target_tenant)
+        )).scalar_one_or_none()
+        if not tenant_exists:
+            raise HTTPException(status_code=422, detail=f"Tenant '{target_tenant}' does not exist")
+
+    allowed_roles = {"admin", "operator", "agent", "user"}
+    roles = [r for r in (payload.roles or []) if r in allowed_roles] or ["agent"]
+
     user = await crud.create_user(
         db,
         username=payload.username,
         email=payload.email,
         password=payload.password,
         full_name=payload.full_name,
+        tenant_id=target_tenant,
+        roles=roles,
     )
+    user.is_active = payload.is_active
     await db.commit()
     return UserResponse.model_validate(user)
 

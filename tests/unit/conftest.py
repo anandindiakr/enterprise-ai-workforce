@@ -19,6 +19,5 @@ async def db_session():
         await conn.run_sync(Base.metadata.create_all)
     Session = async_sessionmaker(engine, expire_on_commit=False)
     async with Session() as session:
-        async with session.begin():
-            yield session
+        yield session
     await engine.dispose()
