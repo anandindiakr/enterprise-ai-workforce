@@ -144,11 +144,14 @@ export default function ChatPage() {
   const [sessionId, setSessionId] = useState("");
   const [pastSessions, setPastSessions] = useState<{id:string;department:string;title:string|null;created_at:string}[]>([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [showInfo, setShowInfo] = useState(false);
+  const [showTransfer, setShowTransfer] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const skipGreetingRef = useRef(false);
 
   const dept = getDept(deptId);
   const Icon = dept.icon;
@@ -194,8 +197,14 @@ export default function ChatPage() {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, typing]);
 
-  /* Inject greeting when department changes */
+  /* Inject greeting on manual department switches / new chats. Programmatic
+     dept changes (agent transfers, session loads) set skipGreetingRef first
+     so the existing transcript is preserved instead of being wiped. */
   useEffect(() => {
+    if (skipGreetingRef.current) {
+      skipGreetingRef.current = false;
+      return;
+    }
     const d = getDept(deptId);
     setMessages([
       {
@@ -246,6 +255,7 @@ export default function ChatPage() {
               dept: deptId,
             },
           ]);
+          skipGreetingRef.current = true;
           setDeptId(transferredTo);
           return;
         }
@@ -263,6 +273,7 @@ export default function ChatPage() {
         // Auto-switch department if the response carries one
         const responseDept: string | null = data.department ?? data.message?.department ?? null;
         if (responseDept && DEPARTMENTS.some((d) => d.id === responseDept) && responseDept !== deptId) {
+          skipGreetingRef.current = true;
           setDeptId(responseDept);
         }
 
@@ -318,6 +329,7 @@ export default function ChatPage() {
       });
       if (!res.ok) return;
       const data = await res.json();
+      skipGreetingRef.current = true;
       setDeptId(dept);
       setSessionId(sid);
       setMessages(
@@ -430,6 +442,7 @@ export default function ChatPage() {
                         dept: deptId,
                       },
                     ]);
+                    skipGreetingRef.current = true;
                     setDeptId(transferredTo);
                   }
                 } else if (evt.type === "error") {
@@ -604,12 +617,17 @@ export default function ChatPage() {
             </div>
           </div>
           <div className="flex items-center gap-3">
-            {/* Agent Handoff dropdown */}
+            {/* Agent Handoff dropdown — click or hover to open */}
             <div className="relative group">
-              <button className="flex items-center gap-1.5 rounded-lg border border-[#1f2937] px-3 py-1.5 text-xs text-slate-400 transition-all hover:border-[#374151] hover:text-slate-200">
+              <button
+                onClick={() => setShowTransfer(!showTransfer)}
+                className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-all hover:border-[#374151] hover:text-slate-200 ${showTransfer ? "border-amber-500/50 text-amber-300" : "border-[#1f2937] text-slate-400"}`}
+              >
                 <ArrowRightLeft className="h-3 w-3" /> Transfer
               </button>
-              <div className="absolute right-0 top-full mt-1 w-44 rounded-lg border border-[#1f2937] bg-[#0a0f1a] shadow-xl opacity-0 invisible group-hover:opacity-100 group-hover:visible transition-all z-50">
+              <div
+                className={`absolute right-0 top-full mt-1 w-44 rounded-lg border border-[#1f2937] bg-[#0a0f1a] shadow-xl transition-all z-50 ${showTransfer ? "opacity-100 visible" : "opacity-0 invisible group-hover:opacity-100 group-hover:visible"}`}
+              >
                 <p className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-widest text-slate-600">Transfer to</p>
                 {DEPARTMENTS.filter((d) => d.id !== deptId).map((d) => (
                   <button
@@ -617,7 +635,9 @@ export default function ChatPage() {
                     onClick={() => {
                       const note: Message = { id: genId(), role: "assistant", content: `Transferring you to the ${d.label} department…`, timestamp: new Date(), dept: deptId };
                       setMessages((prev) => [...prev, note]);
+                      skipGreetingRef.current = true;
                       setDeptId(d.id);
+                      setShowTransfer(false);
                     }}
                     className={`flex w-full items-center gap-2 px-3 py-2 text-xs transition-colors hover:bg-[#111827] ${d.colorText}`}
                   >
@@ -652,9 +672,26 @@ export default function ChatPage() {
               <Mic className="h-3 w-3" />
               Switch to Voice
             </Link>
-            <button className="rounded-lg border border-[#1f2937] p-1.5 text-slate-500 transition-colors hover:text-slate-300">
-              <Info className="h-4 w-4" />
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setShowInfo(!showInfo)}
+                className="rounded-lg border border-[#1f2937] p-1.5 text-slate-500 transition-colors hover:text-slate-300"
+                title="Session info"
+              >
+                <Info className="h-4 w-4" />
+              </button>
+              {showInfo && (
+                <div className="absolute right-0 top-full mt-1 w-64 rounded-lg border border-[#1f2937] bg-[#0a0f1a] p-3 text-xs shadow-xl z-50">
+                  <p className="mb-2 font-mono text-[10px] uppercase tracking-widest text-slate-600">Session info</p>
+                  <div className="space-y-1.5 text-slate-400">
+                    <p className="flex justify-between gap-3"><span>Session ID</span><span className="font-mono text-slate-300">{sessionId}</span></p>
+                    <p className="flex justify-between gap-3"><span>Department</span><span className={dept.colorText}>{dept.label}</span></p>
+                    <p className="flex justify-between gap-3"><span>Connection</span><span className={wsInfo.color}>{wsInfo.label}</span></p>
+                    <p className="flex justify-between gap-3"><span>Messages</span><span className="text-slate-300">{messages.length}</span></p>
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

@@ -175,16 +175,42 @@ async def system_stats(
 
     uptime_hours = (time.time() - _START_TIME) / 3600
 
+    # Real averages/counters from the in-process Prometheus metrics instead of
+    # hardcoded placeholders: avg response time across completed conversations,
+    # and total swarm/workflow executions. Both degrade to 0 (not a fake value)
+    # when there is no data yet or the metric store is unavailable.
+    avg_response_ms = 0
+    workflows_run = 0
+    try:
+        from app.telemetry.metrics import chat_latency_seconds, swarm_executions_total
+
+        total_count = total_sum = 0
+        for child in getattr(chat_latency_seconds, "_metrics", {}).values():
+            total_count += int(getattr(child, "_count", 0) or 0)
+            total_sum += float(getattr(child, "_sum", 0) or 0)
+        if total_count:
+            avg_response_ms = round((total_sum / total_count) * 1000, 1)
+
+        for child in getattr(swarm_executions_total, "_metrics", {}).values():
+            try:
+                workflows_run += int(child._value.get())
+            except Exception:  # noqa: BLE001
+                continue
+    except Exception:  # noqa: BLE001
+        avg_response_ms = 0
+        workflows_run = 0
+
     result = {
         "services": services,
         "active_chat_sessions": active_chat,
         "active_voice_sessions": active_voice,
+        "workflows_run": workflows_run,
         "total_users": total_users,
         "active_users_today": active_users_today,
         "messages_today": messages_today,
         "api_requests_today": api_requests_today,
         "error_rate_pct": error_rate_pct,
-        "avg_response_ms": 120,
+        "avg_response_ms": avg_response_ms,
         "uptime_hours": round(uptime_hours, 2),
     }
 

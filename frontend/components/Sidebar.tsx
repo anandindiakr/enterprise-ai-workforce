@@ -79,10 +79,28 @@ export function Sidebar() {
   const [collapsed, setCollapsed] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [onboardingDone, setOnboardingDone] = useState(true);
+  const [systemOk, setSystemOk] = useState<boolean | null>(null);
 
   /* Load user from localStorage on mount (client only) */
   useEffect(() => {
     setUser(getUser());
+  }, []);
+
+  /* Real system status: every service must be healthy, else degraded. */
+  useEffect(() => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("workforce_token") : null;
+    if (!token) return;
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+    import("@/lib/auth")
+      .then(({ authHeaders }) =>
+        fetch(`${apiBase}/api/v1/system/stats`, { headers: authHeaders() })
+      )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d?.services?.length) { setSystemOk(null); return; }
+        setSystemOk(d.services.every((s: { status: string }) => s.status === "healthy"));
+      })
+      .catch(() => setSystemOk(null));
   }, []);
 
   /* Check onboarding status so we can show a "Setup" badge until complete */
@@ -224,8 +242,18 @@ export function Sidebar() {
 
         {!collapsed && (
           <div className="flex items-center gap-2 px-1">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 status-pulse" />
-            <span className="font-mono text-[10px] text-slate-500">ALL SYSTEMS NOMINAL</span>
+            <span
+              className={`h-1.5 w-1.5 rounded-full ${
+                systemOk === null
+                  ? "bg-slate-600"
+                  : systemOk
+                  ? "bg-emerald-500 status-pulse"
+                  : "bg-red-500 status-pulse"
+              }`}
+            />
+            <span className="font-mono text-[10px] text-slate-500">
+              {systemOk === null ? "CHECKING SERVICES…" : systemOk ? "ALL SYSTEMS NOMINAL" : "SERVICE DEGRADED"}
+            </span>
           </div>
         )}
 

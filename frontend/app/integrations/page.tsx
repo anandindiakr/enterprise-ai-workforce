@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import {
   Plug, CheckCircle, Clock, AlertCircle, ExternalLink,
   Users, DollarSign, BarChart2, Cpu, Mail, Calendar,
@@ -153,6 +153,31 @@ const INTEGRATIONS: Integration[] = [
 
 const CATEGORIES = [...new Set(INTEGRATIONS.map((i) => i.category))];
 
+// Vendor catalog → generic connector key stored by the backend
+// (GET/POST /api/v1/settings/integrations). The backend stores connector
+// base URLs, not vendor OAuth credentials.
+const VENDOR_TO_KEY: Record<string, string> = {
+  hubspot:         "crm_base_url",
+  salesforce:      "crm_base_url",
+  bamboohr:        "hris_base_url",
+  quickbooks:      "finance_base_url",
+  jira:            "devops_base_url",
+  zendesk:         "devops_base_url",
+  google_calendar: "calendar_base_url",
+};
+
+// Resolve the connector base URL from this vendor's form fields, or null when
+// the fields can't produce one (API-key/OAuth-only vendors).
+function resolveConnectorValue(id: string, values: Record<string, string>): string | null {
+  const urlField = id === "salesforce" ? "instance_url" : id === "jira" ? "domain" : null;
+  if (urlField && values[urlField]?.trim()) return values[urlField].trim();
+  if (id === "bamboohr" && values.subdomain?.trim())
+    return `https://${values.subdomain.trim()}.bamboohr.com`;
+  if (id === "zendesk" && values.subdomain?.trim())
+    return `https://${values.subdomain.trim()}.zendesk.com`;
+  return null;
+}
+
 function statusIcon(status: Integration["status"]) {
   if (status === "connected")
     return <CheckCircle className="h-4 w-4 text-emerald-400" />;
@@ -179,6 +204,28 @@ export default function IntegrationsPage() {
     (i) => filter === "All" || i.category === filter
   );
 
+  /* Load the real connected state from the backend on mount. */
+  useEffect(() => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("workforce_token") : null;
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+    fetch(`${apiBase}/api/v1/settings/integrations`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        const configured = new Set(
+          (d.integrations ?? []).map((i: { key: string }) => i.key)
+        );
+        const connectedVendors = new Set<string>();
+        Object.entries(VENDOR_TO_KEY).forEach(([vendor, key]) => {
+          if (configured.has(key)) connectedVendors.add(vendor);
+        });
+        setConnected(connectedVendors);
+      })
+      .catch(() => {});
+  }, []);
+
   function openConfig(integration: Integration) {
     if (integration.status === "coming_soon") return;
     setActive(integration);
@@ -190,10 +237,38 @@ export default function IntegrationsPage() {
     if (!active) return;
     setSaving(true);
     setSaveMsg("");
-    // Simulate save — in production, POST to /api/v1/settings/integrations
-    await new Promise((r) => setTimeout(r, 800));
-    setConnected((prev) => new Set([...prev, active.id]));
-    setSaveMsg("Configuration saved. Agents can now use this integration.");
+    const key = VENDOR_TO_KEY[active.id];
+    const value = resolveConnectorValue(active.id, formValues);
+
+    if (!key) {
+      // Vendor not mapped to a backend connector — don't fake success.
+      setSaveMsg("This integration isn't wired to a connector yet.");
+      setSaving(false);
+      return;
+    }
+    if (value === null) {
+      setSaveMsg(
+        "This vendor needs a connector URL, which its fields can't provide. " +
+        "Add the base URL under Settings → Integrations."
+      );
+      setSaving(false);
+      return;
+    }
+
+    const token = typeof window !== "undefined" ? localStorage.getItem("workforce_token") : null;
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+    try {
+      const r = await fetch(`${apiBase}/api/v1/settings/integrations`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+        body: JSON.stringify({ integrations: { [key]: value } }),
+      });
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      setConnected((prev) => new Set([...prev, active.id]));
+      setSaveMsg("Configuration saved. Agents can now use this integration.");
+    } catch {
+      setSaveMsg("Save failed — check your connection and try again.");
+    }
     setSaving(false);
   }
 
@@ -213,7 +288,8 @@ export default function IntegrationsPage() {
       {/* Notice */}
       <div className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4 text-sm text-amber-300">
         <strong>Note:</strong> Integrations are currently in mock mode — agents respond with simulated data.
-        Configure your API keys here and agents will automatically switch to live data.
+        Connector endpoints configured here are stored and shown as Connected; live
+        vendor sync is enabled once real connectors are activated.
       </div>
 
       {/* Category filter */}

@@ -117,22 +117,56 @@ const AGENTS = [
 
 const STATS = [
   { label: "Agents Online", value: "7 / 7", icon: Activity, color: "text-emerald-400", sub: "All departments active" },
-  { label: "Active Sessions", value: "—", icon: MessageSquare, color: "text-amber-400", sub: "Start a conversation" },
-  { label: "Avg Response", value: "< 2s", icon: Clock, color: "text-cyan-400", sub: "Target SLA: 3s" },
-  { label: "Workflows Run", value: "—", icon: TrendingUp, color: "text-violet-400", sub: "Orchestrated by Director" },
+  { label: "Active Sessions", value: "live", icon: MessageSquare, color: "text-amber-400", sub: "Chat + voice right now" },
+  { label: "Avg Response", value: "live", icon: Clock, color: "text-cyan-400", sub: "Measured across conversations" },
+  { label: "Workflows Run", value: "live", icon: TrendingUp, color: "text-violet-400", sub: "Orchestrated by Director" },
 ];
 
 /* ── Component ───────────────────────────────────────────── */
 
 export default function DashboardPage() {
   const [apiStatus, setApiStatus] = useState<"checking" | "online" | "offline">("checking");
+  const [live, setLive] = useState<{ sessions: string; avgMs: string; workflows: string }>({
+    sessions: "…",
+    avgMs: "…",
+    workflows: "…",
+  });
 
   useEffect(() => {
     const url = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
     fetch(`${url}/api/v1/health`)
       .then((r) => setApiStatus(r.ok ? "online" : "offline"))
       .catch(() => setApiStatus("offline"));
+
+    // Real usage numbers from system stats (admin endpoint — non-admins keep
+    // the dash instead of erroring).
+    import("@/lib/auth")
+      .then(({ authHeaders }) =>
+        fetch(`${url}/api/v1/system/stats`, { headers: authHeaders() })
+      )
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => {
+        if (!d) return;
+        const sessions = (d.active_chat_sessions ?? 0) + (d.active_voice_sessions ?? 0);
+        const avgMs =
+          typeof d.avg_response_ms === "number" && d.avg_response_ms > 0
+            ? `${Math.round(d.avg_response_ms)}ms`
+            : "< 1s";
+        setLive({
+          sessions: String(sessions),
+          avgMs,
+          workflows: String(d.workflows_run ?? 0),
+        });
+      })
+      .catch(() => {});
   }, []);
+
+  const stats = STATS.map((s) => {
+    if (s.label === "Active Sessions") return { ...s, value: live.sessions };
+    if (s.label === "Avg Response") return { ...s, value: live.avgMs };
+    if (s.label === "Workflows Run") return { ...s, value: live.workflows };
+    return s;
+  });
 
   return (
     <div className="px-8 py-8 max-w-screen-2xl">
@@ -188,7 +222,7 @@ export default function DashboardPage() {
 
       {/* ── Stats row ──────────────────────────────────────── */}
       <div className="mb-8 grid grid-cols-2 gap-4 lg:grid-cols-4">
-        {STATS.map((s) => (
+        {stats.map((s) => (
           <div
             key={s.label}
             className="rounded-xl border border-[#1f2937] bg-[#0c111d] p-5 transition-colors hover:border-[#2d3f55]"
@@ -305,7 +339,7 @@ export default function DashboardPage() {
           ))}
 
           <a
-            href="http://localhost:8080/docs"
+            href={`${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080"}/docs`}
             target="_blank"
             rel="noopener noreferrer"
             className="ml-auto flex items-center gap-1.5 text-xs text-slate-500 transition-colors hover:text-amber-400"
