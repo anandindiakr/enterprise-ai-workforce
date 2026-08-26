@@ -131,11 +131,26 @@ async def chat_stream(
             # Deterministic transfer handling: if the user explicitly asks to be
             # transferred, route through the full handler so the response carries
             # ``transferred_to`` and a clean handoff phrase (the raw token stream
-            # cannot express a transfer).
+            # cannot express a transfer). Same for topic-routing at the front
+            # desk: when the console is pinned to Reception but the message
+            # clearly belongs to another department, the full handler performs
+            # the handoff instead of a generic "I don't have access" stream.
             from app.voice.session import detect_transfer_intent
+            from app.swarms.router import workforce_router
 
             intent = detect_transfer_intent(request.message)
-            if intent is not None and intent != request.department:
+            pinned = request.department
+            pinned_value = pinned.value if hasattr(pinned, "value") else pinned
+            topic_dept = workforce_router().choose_department(request.message)
+            needs_full_handler = (
+                (intent is not None and intent != pinned)
+                or (
+                    pinned_value == "reception"
+                    and topic_dept is not None
+                    and topic_dept != pinned
+                )
+            )
+            if needs_full_handler:
                 resp = await chat_service().handle(request)
                 content = resp.message.content or ""
                 yield _sse({"type": "token", "token": content})

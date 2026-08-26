@@ -264,6 +264,58 @@ def _match_department(text: str) -> Department | None:
     return None
 
 
+# Phrases that signal an agent replied without actually being able to help.
+# Used by the topic-routing fallback so a cross-department request that the
+# current agent punted on is handed off deterministically instead of leaving
+# the user stuck with a generic "I don't have access" reply.
+_REFUSAL_MARKERS = (
+    "don't have access", "do not have access", "don't have direct access",
+    "do not have direct access", "no access to", "can't help", "cannot help",
+    "can't assist", "cannot assist", "unable to", "not able to",
+    "don't have the", "do not have the", "doesn't have", "does not have",
+    "don't have information", "no information on", "no data on",
+    "could you please provide", "please provide details",
+)
+
+# Replies shorter than this (after stripping) are treated as a punt / clarifying
+# question, so a deterministic topic transfer may override them. Longer replies
+# are treated as real answers and are NEVER overwritten.
+_PUNT_MAX_LEN = 100
+
+
+def resolve_topic_transfer(
+    current: Department,
+    message: str,
+    agent_reply: str,
+) -> Department | None:
+    """Deterministic topic-based hand-off, or ``None``.
+
+    The enterprise-orchestration guard rails:
+
+    * only fires for a *real* topic owner -- never Reception, which is the
+      keyword router's catch-all default, not a topic (prevents bouncing
+      unmatched messages to the front desk);
+    * never self-transfers (target must differ from the current department);
+    * only overrides the agent when it actually punted -- the reply is empty,
+      shorter than :data:`_PUNT_MAX_LEN`, or contains a refusal marker -- so a
+      substantive answer is never wiped.
+
+    This is the deterministic layer under the LLM's own ``transfer`` directive:
+    it catches cross-department requests that the model failed to hand off.
+    """
+    topic = workforce_router().choose_department(message)
+    if topic is None or topic == Department.RECEPTION or topic == current:
+        return None
+    reply = (agent_reply or "").strip().lower()
+    if not reply:
+        return topic
+    if len(reply) < _PUNT_MAX_LEN:
+        return topic
+    if any(marker in reply for marker in _REFUSAL_MARKERS):
+        return topic
+    return None
+
+
 def detect_transfer_intent(user_text: str) -> Department | None:
     """Deterministically detect an explicit transfer request in a *user* message.
 

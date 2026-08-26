@@ -28,6 +28,7 @@ from app.voice.session import (
     _detect_control_signals,
     _strip_control_signals,
     detect_transfer_intent,
+    resolve_topic_transfer,
 )
 
 # Swarms agent.run() returns the raw conversation accumulation:
@@ -373,6 +374,18 @@ class ChatService:
                     transferred = intent
                     text = ""  # force the natural handoff phrase below
 
+            # Topic-routing fallback: when the user's message clearly belongs to
+            # a different department (keyword match) but neither the LLM nor the
+            # explicit-transfer detector routed it, hand off deterministically.
+            # Guard rails (in resolve_topic_transfer): only real topic owners
+            # are targets (never Reception), no self-transfers, and a
+            # substantive agent answer is never overwritten.
+            if transferred is None:
+                topic_dept = resolve_topic_transfer(department, request.message, text)
+                if topic_dept is not None:
+                    transferred = topic_dept
+                    text = ""  # force the natural handoff phrase below
+
             if escalation != EscalationLevel.NONE:
                 escalations_total.labels(department.value, escalation.value).inc()
             final_dept = transferred or department
@@ -611,6 +624,33 @@ class ChatService:
         chat_latency_seconds.labels(department.value).observe(time.perf_counter() - start)
         chat_requests_total.labels(department.value, "success").inc()
 
+        # Topic-routing fallback (same guard rails as the full handler): if the
+        # caller's message clearly belongs to another department and the fast
+        # reply shows the current agent couldn't actually help, hand off
+        # deterministically so live phone calls (Asterisk/Singtel) route topics
+        # the same way chat does.
+        if leaked_transfer is None:
+            topic = resolve_topic_transfer(department, request.message, text)
+            if topic is not None:
+                label = dept_labels.get(topic.value, topic.value.replace("_", " ").title())
+                handoff = f"Sure thing! Let me connect you with our {label} team right now — one moment."
+                agent_msg = Message(
+                    session_id=session_id,
+                    role=Role.AGENT,
+                    content=handoff,
+                    department=topic,
+                    agent_name=PROFILES_BY_DEPARTMENT[topic].agent_name,
+                )
+                await memory.record_message(ctx, agent_msg)
+                return ChatResponse(
+                    session_id=session_id,
+                    message=agent_msg,
+                    agent_name=agent_msg.agent_name or "Workforce",
+                    department=topic,
+                    escalation=EscalationLevel.NONE,
+                    transferred_to=topic,
+                )
+
         # If the model leaked a transfer to a *different* department, perform the
         # hand-off deterministically instead of speaking the JSON.
         if leaked_transfer is not None and leaked_transfer != department:
@@ -693,7 +733,12 @@ async def stream_chat_tokens(request: ChatRequest):
         from app.agents.prompts import build_system_prompt
         from app.core.types import Department
 
-        department = request.department or Department.RECEPTION
+        # Route un-pinned messages through the keyword router instead of always
+        # defaulting to Reception, so a bare "I need help with my invoice" lands
+        # with Finance rather than the front desk.
+        from app.swarms.router import workforce_router
+
+        department = request.department or workforce_router().choose_department(request.message)
         profile = PROFILES_BY_DEPARTMENT.get(department)
 
         session_id = request.session_id or uuid4().hex
