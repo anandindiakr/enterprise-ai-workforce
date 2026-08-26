@@ -51,6 +51,22 @@ async def chat_socket(ws: WebSocket, session_id: str | None = None) -> None:
     user_id   = principal_id or ws.query_params.get("user_id", "anonymous")
     tenant_id = principal_tenant or ws.query_params.get("tenant_id")
 
+    # Tenant ownership guard: a session id that exists in the DB but belongs
+    # to another tenant must not be usable over the socket — otherwise a user
+    # could read another tenant's transcript by guessing a session id.
+    if principal_tenant and session_id:
+        try:
+            from app.db.crud import get_chat_session
+            from app.db.session import AsyncSessionLocal
+
+            async with AsyncSessionLocal() as _db:
+                existing = await get_chat_session(_db, session_id)
+                if existing is not None and existing.tenant_id != principal_tenant:
+                    await ws.close(code=4001)
+                    return
+        except Exception:  # noqa: BLE001
+            logger.debug("Chat WS tenant check skipped session={}", session_id)
+
     logger.info("Chat WS connected session={} user={}", session_id, user_id)
     try:
         while True:

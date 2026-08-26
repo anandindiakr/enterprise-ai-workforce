@@ -29,6 +29,22 @@ from app.services.chat_service import chat_service, stream_chat_tokens
 router = APIRouter(prefix="/chat", tags=["chat"])
 
 
+async def _get_owned_session(
+    db,
+    session_id: str,
+    tenant_id: str | None,
+):
+    """Fetch a chat session and enforce tenant ownership.
+
+    A session that exists but belongs to another tenant is treated the same
+    as a missing one (404) so session ids are never revealed across tenants.
+    """
+    session = await get_chat_session(db, session_id)
+    if session is None or session.tenant_id != (tenant_id or "default"):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    return session
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Send a message (single-turn)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -48,8 +64,10 @@ async def chat(
     voice (deterministic transfers + a single LLM call) instead of the full
     Swarms hierarchy.
     """
-    if request.tenant_id is None:
-        request.tenant_id = principal.tenant_id
+    # The authenticated tenant is authoritative: a client-supplied tenant_id is
+    # only honoured for anonymous requests, so a logged-in user can never read
+    # or write another tenant's data by spoofing the request body.
+    request.tenant_id = principal.tenant_id or request.tenant_id or "default"
     if not request.user_id:
         request.user_id = principal.user_id
 
@@ -62,9 +80,12 @@ async def chat(
                 db,
                 session_id=session_id,
                 user_id=request.user_id,
-                tenant_id=request.tenant_id or "default",
+                tenant_id=request.tenant_id,
                 department=request.department or "reception",
             )
+        elif existing.tenant_id != request.tenant_id:
+            # Cross-tenant session id — never touch or acknowledge it.
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
 
     response = await (
         chat_service().handle_fast(request) if fast else chat_service().handle(request)
@@ -119,8 +140,9 @@ async def chat_stream(
     principal: Principal = Depends(optional_principal),
 ) -> StreamingResponse:
     """Server-Sent Events streaming endpoint."""
-    if request.tenant_id is None:
-        request.tenant_id = principal.tenant_id
+    # Authenticated tenant wins over any tenant_id in the request body (see
+    # the single-turn handler for the same rationale).
+    request.tenant_id = principal.tenant_id or request.tenant_id or "default"
     if not request.user_id:
         request.user_id = principal.user_id
 
@@ -226,10 +248,8 @@ async def get_session(
     principal: Principal = Depends(get_principal),
     db=Depends(get_db),
 ) -> dict:
-    """Get session metadata + message history."""
-    session = await get_chat_session(db, session_id)
-    if session is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    """Get session metadata + message history (tenant-scoped)."""
+    session = await _get_owned_session(db, session_id, principal.tenant_id)
 
     messages = await list_chat_messages(db, session_id, limit=500)
     return {
@@ -260,10 +280,8 @@ async def close_session(
     principal: Principal = Depends(get_principal),
     db=Depends(get_db),
 ) -> dict:
-    """Close / archive a chat session."""
-    session = await get_chat_session(db, session_id)
-    if session is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    """Close / archive a chat session (tenant-scoped)."""
+    session = await _get_owned_session(db, session_id, principal.tenant_id)
     await close_chat_session(db, session)
     return {"closed": True, "session_id": session_id}
 
@@ -279,10 +297,8 @@ async def export_session(
     principal: Principal = Depends(get_principal),
     db=Depends(get_db),
 ) -> StreamingResponse:
-    """Export a session's message history as JSON or CSV."""
-    session = await get_chat_session(db, session_id)
-    if session is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Session not found")
+    """Export a session's message history as JSON or CSV (tenant-scoped)."""
+    session = await _get_owned_session(db, session_id, principal.tenant_id)
     messages = await list_chat_messages(db, session_id, limit=2000)
 
     if format == "csv":

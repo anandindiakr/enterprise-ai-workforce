@@ -157,3 +157,40 @@ async def test_substantive_answer_never_overwritten():
     assert resp.transferred_to is None
     assert resp.department == Department.RECEPTION
     assert "enterprise plan" in (resp.message.content or "").lower()
+
+
+# ---------------------------------------------------------------------------
+# Multi-tenant isolation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_get_owned_session_rejects_cross_tenant(db_session):
+    """A session owned by another tenant must be invisible (404), not readable."""
+    from fastapi import HTTPException
+
+    from app.api.routes.chat import _get_owned_session
+    from app.db.crud import create_chat_session
+
+    session = await create_chat_session(db_session, tenant_id="acme", department="sales")
+    sid = str(session.id)
+
+    # Owner tenant can fetch it.
+    owned = await _get_owned_session(db_session, sid, "acme")
+    assert owned is not None
+
+    # Another tenant sees 404 — no existence leak.
+    with pytest.raises(HTTPException) as excinfo:
+        await _get_owned_session(db_session, sid, "otherco")
+    assert excinfo.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_get_owned_session_missing_is_404(db_session):
+    from fastapi import HTTPException
+
+    from app.api.routes.chat import _get_owned_session
+
+    with pytest.raises(HTTPException) as excinfo:
+        await _get_owned_session(db_session, "00000000-0000-0000-0000-000000000000", "acme")
+    assert excinfo.value.status_code == 404
