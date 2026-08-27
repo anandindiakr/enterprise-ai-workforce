@@ -298,3 +298,57 @@ class ProductModel(Base):
     created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
+
+
+class LedgerEntryModel(Base):
+    """A single finance ledger line: invoice issued, bill paid, payment received.
+
+    Rows are created manually from the Finance page or automatically when a
+    bill/invoice document is ingested (LLM extraction with a manual fallback).
+    Scoped per tenant — each organisation's books stay isolated.
+    """
+    __tablename__ = "ledger_entries"
+
+    id: Mapped[uuid.UUID] = mapped_column(_UUID, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[str] = mapped_column(String(64), default="default", nullable=False, index=True)
+    entry_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False, index=True)
+    # "invoice" (money in) | "expense" (money out) | "payment" (settlement)
+    entry_type: Mapped[str] = mapped_column(String(16), default="expense", nullable=False, index=True)
+    vendor: Mapped[str] = mapped_column(String(255), default="", nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    # Decimal amounts are stored as string-paise-free float for simplicity;
+    # the UI formats per currency.
+    amount: Mapped[float] = mapped_column(default=0.0, nullable=False)
+    currency: Mapped[str] = mapped_column(String(8), default="INR", nullable=False)
+    category: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    status: Mapped[str] = mapped_column(String(16), default="recorded", nullable=False)  # recorded|pending_review|paid
+    source_doc: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", _JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+
+
+class ApplicantModel(Base):
+    """A job applicant in the HR pipeline (recruitment tracker).
+
+    Created manually or by ingesting a resume (LLM extracts name/contact/
+    skills, optional score vs. the position). Scoped per tenant.
+    """
+    __tablename__ = "hr_applicants"
+
+    id: Mapped[uuid.UUID] = mapped_column(_UUID, primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[str] = mapped_column(String(64), default="default", nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    email: Mapped[str | None] = mapped_column(String(255), nullable=True)
+    phone: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    position: Mapped[str] = mapped_column(String(255), default="", nullable=False, index=True)
+    # applied -> screening -> interview -> offer -> hired | rejected
+    status: Mapped[str] = mapped_column(String(24), default="applied", nullable=False, index=True)
+    score: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 0-100 fit score
+    skills: Mapped[list] = mapped_column(_JSONB, default=list, nullable=False)
+    notes: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    resume_doc_id: Mapped[uuid.UUID | None] = mapped_column(_UUID, nullable=True)
+    created_by: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    metadata_: Mapped[dict] = mapped_column("metadata", _JSONB, default=dict, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

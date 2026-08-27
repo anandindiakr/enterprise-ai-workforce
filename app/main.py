@@ -20,6 +20,8 @@ from app.api.routes import voice as voice_routes
 from app.api.routes.escalations import router as escalations_router
 from app.api.routes.knowledge import router as knowledge_router
 from app.api.routes.products import router as products_router
+from app.api.routes.finance import router as finance_router
+from app.api.routes.hr import router as hr_router
 from app.api.routes.audit import router as audit_router
 from app.api.routes.settings import router as settings_router
 from app.api.routes.alerts import router as alerts_router
@@ -194,6 +196,8 @@ def create_app() -> FastAPI:
     app.include_router(escalations_router, prefix=api_v1)
     app.include_router(knowledge_router, prefix=api_v1)
     app.include_router(products_router, prefix=api_v1)
+    app.include_router(finance_router, prefix=api_v1)
+    app.include_router(hr_router, prefix=api_v1)
     app.include_router(audit_router, prefix=api_v1)
     app.include_router(settings_router, prefix=api_v1)
     app.include_router(alerts_router, prefix=api_v1)
