@@ -153,6 +153,7 @@ async def login(
         roles=user.roles,
         scopes=user.scopes,
         tenant_id=user.tenant_id,
+        is_superuser=bool(getattr(user, "is_superuser", False)),
         expires_in=expires_in,
     )
     # Refresh token is a longer-lived JWT (7 days)
@@ -161,6 +162,7 @@ async def login(
         roles=user.roles,
         scopes=user.scopes,
         tenant_id=user.tenant_id,
+        is_superuser=bool(getattr(user, "is_superuser", False)),
         expires_in=7 * 24 * 3600,
     )
     return TokenResponse(access_token=token, expires_in=expires_in, refresh_token=refresh_token)
@@ -193,6 +195,7 @@ async def refresh_token(
         roles=user.roles,
         scopes=user.scopes,
         tenant_id=user.tenant_id,
+        is_superuser=bool(getattr(user, "is_superuser", False)),
         expires_in=expires_in,
     )
     new_refresh = create_access_token(
@@ -200,6 +203,7 @@ async def refresh_token(
         roles=user.roles,
         scopes=user.scopes,
         tenant_id=user.tenant_id,
+        is_superuser=bool(getattr(user, "is_superuser", False)),
         expires_in=7 * 24 * 3600,
     )
     return TokenResponse(access_token=new_access, expires_in=expires_in, refresh_token=new_refresh)

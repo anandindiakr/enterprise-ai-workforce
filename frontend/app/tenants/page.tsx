@@ -334,6 +334,7 @@ function TenantsContent() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [total, setTotal] = useState(0);
   const [loading, setLoading] = useState(true);
+  const [forbidden, setForbidden] = useState(false);
   const [modalTenant, setModalTenant] = useState<Partial<Tenant> | null | false>(false);
   const [statsSlug, setStatsSlug] = useState<string | null>(null);
   const [billingTenant, setBillingTenant] = useState<Tenant | null>(null);
@@ -352,6 +353,9 @@ function TenantsContent() {
         const d = await r.json();
         setTenants(d.tenants ?? []);
         setTotal(d.total ?? 0);
+        setForbidden(false);
+      } else if (r.status === 403) {
+        setForbidden(true);
       }
     } catch {}
     setLoading(false);
@@ -403,6 +407,17 @@ function TenantsContent() {
       </div>
 
       <div className="p-6 space-y-5">
+        {forbidden ? (
+          <div className="rounded-2xl border border-[#1f2937] bg-[#0c111d] p-10 text-center">
+            <Building2 className="mx-auto mb-3 h-8 w-8 text-slate-600" />
+            <p className="text-sm font-medium text-slate-300">Platform administrators only</p>
+            <p className="mx-auto mt-1 max-w-sm text-xs text-slate-500">
+              Tenant management is reserved for the platform super-admin. Your organisation's
+              users, chats and knowledge stay fully isolated within your own workspace.
+            </p>
+          </div>
+        ) : (
+        <>
         {/* Summary cards */}
         <div className="grid grid-cols-3 gap-4">
           {[
@@ -499,6 +514,8 @@ function TenantsContent() {
             <p>3. Share the login URL with them: <code>https://www.algoworkforce.com/login</code></p>
           </div>
         </div>
+        </>
+        )}
       </div>
 
       {/* Modals */}

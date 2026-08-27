@@ -58,7 +58,7 @@ const NAV = [
   { href: "/monitoring", icon: Activity, label: "System Monitor", adminOnly: true },
   { href: "/audit", icon: ClipboardList, label: "Audit Log", adminOnly: true },
   { href: "/admin/users", icon: UserCog, label: "User Management", adminOnly: true },
-  { href: "/tenants", icon: Building2, label: "Tenants", adminOnly: true },
+  { href: "/tenants", icon: Building2, label: "Tenants", adminOnly: true, superuserOnly: true },
   { href: "/portal", icon: LayoutDashboard, label: "My Portal" },
   { href: "/settings", icon: Settings, label: "Settings" },
 ];
@@ -78,12 +78,25 @@ export function Sidebar() {
   const router   = useRouter();
   const [collapsed, setCollapsed] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [isSuperuser, setIsSuperuser] = useState<boolean | null>(null);
   const [onboardingDone, setOnboardingDone] = useState(true);
   const [systemOk, setSystemOk] = useState<boolean | null>(null);
 
   /* Load user from localStorage on mount (client only) */
   useEffect(() => {
     setUser(getUser());
+  }, []);
+
+  /* Resolve real platform-superuser status (Tenants page is superuser-only).
+     null = unknown — keep the item visible until /auth/me answers. */
+  useEffect(() => {
+    const token = typeof window !== "undefined" ? localStorage.getItem("workforce_token") : null;
+    if (!token) return;
+    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+    fetch(`${apiBase}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` } })
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => setIsSuperuser(!!d?.is_superuser))
+      .catch(() => setIsSuperuser(null));
   }, []);
 
   /* Real system status: every service must be healthy, else degraded. */
@@ -153,7 +166,10 @@ export function Sidebar() {
       <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-[#1f2937]">
         {/* Main nav */}
         <nav className="space-y-1 px-2 pt-4">
-          {NAV.filter(({ adminOnly }) => !adminOnly || user?.roles?.includes("admin")).map(({ href, icon: Icon, label, adminOnly, badge }) => {
+          {NAV.filter(({ adminOnly, superuserOnly }) =>
+            (!adminOnly || user?.roles?.includes("admin")) &&
+            (!superuserOnly || isSuperuser !== false)
+          ).map(({ href, icon: Icon, label, adminOnly, badge }) => {
             const active = path === href;
             const showBadge = badge && href === "/onboarding" && !onboardingDone;
             return (

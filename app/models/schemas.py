@@ -198,6 +198,7 @@ class Principal(BaseModel):
     tenant_id: str | None = None
     roles: list[str] = Field(default_factory=list)
     scopes: list[str] = Field(default_factory=list)
+    is_superuser: bool = False
 
 
 ChatResponse.model_rebuild()

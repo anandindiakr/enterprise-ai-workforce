@@ -30,7 +30,7 @@ from app.db.models import (
 )
 from app.db.session import get_db
 from app.models.schemas import Principal
-from app.security.auth import get_principal, require_roles
+from app.security.auth import get_principal, require_roles, require_superuser
 
 router = APIRouter(prefix="/tenants", tags=["tenants"])
 
@@ -71,7 +71,7 @@ async def list_tenants(
     plan: str | None = Query(None),
     limit: int = Query(50, ge=1, le=200),
     offset_val: int = Query(0, alias="offset", ge=0),
-    principal: Principal = Depends(require_roles("admin")),
+    principal: Principal = Depends(require_superuser),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     q = select(TenantModel)
@@ -122,9 +122,10 @@ async def get_tenant(
     )).scalar_one_or_none()
     if not row:
         raise HTTPException(status_code=404, detail="Tenant not found")
-    # Tenant-level users can only view their own tenant
-    if principal.tenant_id and principal.tenant_id != tenant_slug and "admin" not in (principal.roles or []):
-        raise HTTPException(status_code=403, detail="Forbidden")
+    # Platform superuser sees all; tenant users may only view their own tenant.
+    # (The admin ROLE is held by tenant admins too — it grants nothing here.)
+    if not principal.is_superuser and (principal.tenant_id or "default") != tenant_slug:
+        raise HTTPException(status_code=404, detail="Tenant not found")
     return _tenant_to_dict(row)
 
 
@@ -133,7 +134,7 @@ async def get_tenant(
 @router.post("")
 async def create_tenant(
     body: dict[str, Any] = Body(...),
-    principal: Principal = Depends(require_roles("admin")),
+    principal: Principal = Depends(require_superuser),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     slug = body.get("slug", "").strip().lower()
@@ -183,7 +184,7 @@ async def create_tenant(
 async def update_tenant(
     tenant_slug: str,
     body: dict[str, Any] = Body(...),
-    principal: Principal = Depends(require_roles("admin")),
+    principal: Principal = Depends(require_superuser),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     row = (await db.execute(
@@ -219,7 +220,7 @@ async def update_tenant(
 async def delete_tenant(
     tenant_slug: str,
     hard_delete: bool = Query(False, description="Permanently delete (default: suspend)"),
-    principal: Principal = Depends(require_roles("admin")),
+    principal: Principal = Depends(require_superuser),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     row = (await db.execute(
@@ -247,10 +248,9 @@ async def tenant_stats(
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Live usage counters for a single tenant."""
-    # Permission: admin sees all, tenant user sees only own
-    if principal.tenant_id and principal.tenant_id != tenant_slug:
-        if "admin" not in (principal.roles or []):
-            raise HTTPException(status_code=403, detail="Forbidden")
+    # Permission: platform superuser sees all; tenant users only their own.
+    if not principal.is_superuser and (principal.tenant_id or "default") != tenant_slug:
+        raise HTTPException(status_code=403, detail="Forbidden")
 
     row = (await db.execute(
         select(TenantModel).where(TenantModel.slug == tenant_slug)
@@ -336,7 +336,7 @@ async def tenant_stats(
 
 @router.get("/_summary/all")
 async def all_tenants_summary(
-    principal: Principal = Depends(require_roles("admin")),
+    principal: Principal = Depends(require_superuser),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Aggregated usage across all tenants — platform owner view."""

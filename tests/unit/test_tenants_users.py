@@ -118,3 +118,45 @@ async def test_is_active_honoured_on_create(db_session):
         db=db_session,
     )
     assert user.is_active is False
+
+
+# ---------------------------------------------------------------------------
+# Platform-superuser security gate (tenant management is superuser-only)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_require_superuser_blocks_tenant_admin():
+    """A tenant-level admin (roles=['admin']) must NOT pass the platform gate."""
+    from app.security.auth import require_superuser
+
+    with pytest.raises(HTTPException) as excinfo:
+        await require_superuser(principal=Principal(user_id="acmeadmin", roles=["admin"], is_superuser=False))
+    assert excinfo.value.status_code == 403
+
+
+@pytest.mark.asyncio
+async def test_require_superuser_allows_superadmin_and_service():
+    from app.security.auth import require_superuser
+
+    ok = await require_superuser(principal=Principal(user_id="admin", roles=["admin"], is_superuser=True))
+    assert ok.is_superuser is True
+    svc = await require_superuser(principal=Principal(user_id="system", roles=["service"]))
+    assert svc.user_id == "system"
+
+
+def test_superuser_claim_survives_token_roundtrip():
+    """The JWT must carry the is_superuser claim so the API can tell the
+    platform super-admin apart from tenant admins."""
+    from app.security.auth import create_access_token, decode_token
+
+    super_tok = create_access_token(
+        "admin", roles=["admin"], scopes=[], is_superuser=True, expires_in=120
+    )
+    assert decode_token(super_tok)["is_superuser"] is True
+
+    tenant_tok = create_access_token(
+        "acmeadmin", tenant_id="acme", roles=["admin"], scopes=[],
+        is_superuser=False, expires_in=120,
+    )
+    assert decode_token(tenant_tok)["is_superuser"] is False

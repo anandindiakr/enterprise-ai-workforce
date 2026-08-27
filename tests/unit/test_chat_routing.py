@@ -159,6 +159,43 @@ async def test_substantive_answer_never_overwritten():
     assert "enterprise plan" in (resp.message.content or "").lower()
 
 
+@pytest.mark.asyncio
+@patch("app.services.chat_service._retrieve_kb_context", new=AsyncMock(return_value=""))
+@patch("app.services.action_dispatcher.dispatch", new=AsyncMock(return_value=(None, [])))
+async def test_handoff_answers_original_question():
+    """After a transfer, the receiving department must answer the user's
+    original question immediately — the reply must contain the handoff line
+    AND the real answer, and the second swarm call must target the new dept."""
+    from app.services.chat_service import ChatService
+
+    calls: list[Department] = []
+
+    class _HandoffRouter(_FakeRouter):
+        async def execute(self, request) -> WorkflowResult:
+            calls.append(request.department)
+            if request.department == Department.SALES:
+                return _fake_result(
+                    "Pipeline stands at 240,000 across 6 open deals; the top "
+                    "opportunity is BrainguardX at 80,000 — follow-up email drafted."
+                )
+            return _fake_result("I don't have direct access to your sales pipeline data.")
+
+    router = _HandoffRouter(topic_dept=Department.SALES)
+    with patch("app.services.chat_service.memory_manager", return_value=_FakeMemory()), \
+         patch("app.services.chat_service.workforce_router", return_value=router), \
+         patch("app.voice.session.workforce_router", return_value=router):
+        resp = await ChatService().handle(
+            ChatRequest(message="Summarize our sales pipeline and draft a follow-up email",
+                        department=Department.RECEPTION)
+        )
+
+    assert resp.transferred_to == Department.SALES
+    assert calls == [Department.RECEPTION, Department.SALES]
+    content = resp.message.content or ""
+    assert "Sales" in content          # handoff line
+    assert "BrainguardX" in content    # the actual answer from Sales
+
+
 # ---------------------------------------------------------------------------
 # Multi-tenant isolation
 # ---------------------------------------------------------------------------

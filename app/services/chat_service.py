@@ -416,6 +416,47 @@ class ChatService:
                 else:
                     text = f"You're with our {label} team. How can I help you today?"
 
+            # Complete the handoff: the user asked a real question before the
+            # transfer — have the NEW department's agent answer it immediately so
+            # the conversation never dead-ends on the transfer line alone.
+            if transferred is not None:
+                try:
+                    _profile = PROFILES_BY_DEPARTMENT[final_dept]
+                    _handoff_task = request.message
+                    if kb:
+                        _handoff_task += (
+                            f"\n\n[Enterprise knowledge base — use to answer accurately]\n{kb}"
+                        )
+                    _handoff_task += (
+                        f"\n\n[Internal handoff] The user was transferred to you from the "
+                        f"{department.value} agent. You are {_profile.agent_name}. "
+                        f"Answer their original request directly and concretely."
+                    )
+                    _t2 = time.perf_counter()
+                    wf2 = await router.execute(
+                        WorkflowRequest(
+                            task=_handoff_task,
+                            department=final_dept,
+                            user_id=request.user_id,
+                            tenant_id=request.tenant_id,
+                            context={**(request.metadata or {}), "first_turn": False, "handoff": True},
+                        )
+                    )
+                    chat_latency_seconds.labels(final_dept.value).observe(time.perf_counter() - _t2)
+                    chat_requests_total.labels(
+                        final_dept.value, "success" if wf2.succeeded else "error"
+                    ).inc()
+                    _raw2 = _extract_agent_text(
+                        str(wf2.output) if wf2.output is not None else "", task=request.message
+                    )
+                    # Directives inside the follow-up (transfer/escalation) are
+                    # stripped — a handoff answer must never cascade further.
+                    _follow_up = _strip_control_signals(_raw2)
+                    if _follow_up.strip():
+                        text = f"{text}\n\n{_follow_up}"
+                except Exception:
+                    logger.exception("Post-handoff execution failed; keeping transfer message")
+
             agent_msg = Message(
                 session_id=session_id,
                 role=Role.AGENT,

@@ -22,6 +22,7 @@ def create_access_token(
     tenant_id: str | None = None,
     roles: list[str] | None = None,
     scopes: list[str] | None = None,
+    is_superuser: bool = False,
     expires_minutes: int | None = None,
     expires_in: int | None = None,  # seconds override
 ) -> str:
@@ -36,6 +37,7 @@ def create_access_token(
         "tenant_id": tenant_id,
         "roles": roles or [],
         "scopes": scopes or [],
+        "is_superuser": bool(is_superuser),
         "exp": expire,
         "iat": datetime.now(timezone.utc),
         "iss": settings.app_name,
@@ -62,7 +64,7 @@ async def get_principal(
     """Resolve the calling principal from JWT bearer or internal API key."""
     # Internal service-to-service path
     if api_key and api_key == settings.internal_api_key:
-        return Principal(user_id="system", roles=["service"], scopes=["*"])
+        return Principal(user_id="system", roles=["service"], scopes=["*"], is_superuser=True)
 
     if not token:
         raise HTTPException(
@@ -76,6 +78,7 @@ async def get_principal(
         tenant_id=payload.get("tenant_id"),
         roles=payload.get("roles", []),
         scopes=payload.get("scopes", []),
+        is_superuser=bool(payload.get("is_superuser", False)),
     )
 
 
@@ -85,7 +88,7 @@ async def optional_principal(
 ) -> Principal:
     """Like get_principal but returns an anonymous principal when no credentials are provided."""
     if api_key and api_key == settings.internal_api_key:
-        return Principal(user_id="system", roles=["service"], scopes=["*"])
+        return Principal(user_id="system", roles=["service"], scopes=["*"], is_superuser=True)
 
     if token:
         try:
@@ -95,6 +98,7 @@ async def optional_principal(
                 tenant_id=payload.get("tenant_id"),
                 roles=payload.get("roles", []),
                 scopes=payload.get("scopes", []),
+                is_superuser=bool(payload.get("is_superuser", False)),
             )
         except Exception:
             pass
@@ -123,5 +127,19 @@ async def require_admin(principal: Principal = Depends(get_principal)) -> Princi
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail="Admin role required",
+        )
+    return principal
+
+
+async def require_superuser(principal: Principal = Depends(get_principal)) -> Principal:
+    """Dependency: caller must be the platform super-admin (or an internal service).
+
+    Tenant-level admins have roles=['admin'] too, so the admin ROLE alone must
+    never grant platform-wide power — only the is_superuser claim does.
+    """
+    if not principal.is_superuser and "service" not in principal.roles:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Platform administrator access required",
         )
     return principal
