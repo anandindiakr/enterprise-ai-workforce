@@ -146,6 +146,7 @@ export default function ChatPage() {
   const [showHistory, setShowHistory] = useState(false);
   const [showInfo, setShowInfo] = useState(false);
   const [showTransfer, setShowTransfer] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -651,25 +652,51 @@ export default function ChatPage() {
                 ))}
               </div>
             </div>
-            <button
-              onClick={() => {
-                const txt = messages
-                  .map((m) => `[${m.timestamp.toISOString()}] ${m.role.toUpperCase()}: ${m.content}`)
-                  .join("\n\n");
-                const blob = new Blob([txt], { type: "text/plain" });
-                const url  = URL.createObjectURL(blob);
-                const a    = document.createElement("a");
-                a.href     = url;
-                a.download = `conversation-${deptId}-${new Date().toISOString().slice(0,10)}.txt`;
-                a.click();
-                URL.revokeObjectURL(url);
-              }}
-              disabled={messages.length === 0}
-              title="Export conversation"
-              className="flex items-center gap-1.5 rounded-lg border border-[#1f2937] px-3 py-1.5 text-xs text-slate-400 transition-colors hover:border-emerald-500/30 hover:text-emerald-400 disabled:opacity-30"
-            >
-              <Download className="h-3 w-3" /> Export
-            </button>
+            <div className="relative">
+              <button
+                onClick={() => setExportOpen((v) => !v)}
+                disabled={messages.length === 0}
+                title="Export conversation"
+                className="flex items-center gap-1.5 rounded-lg border border-[#1f2937] px-3 py-1.5 text-xs text-slate-400 transition-colors hover:border-emerald-500/30 hover:text-emerald-400 disabled:opacity-30"
+              >
+                <Download className="h-3 w-3" /> Export
+              </button>
+              {exportOpen && (
+                <div className="absolute right-0 top-9 z-20 w-44 overflow-hidden rounded-xl border border-[#1f2937] bg-[#0c111d] shadow-2xl">
+                  {([
+                    ["pdf", "PDF document"],
+                    ["txt", "Text (.txt)"],
+                    ["csv", "Spreadsheet (.csv)"],
+                    ["json", "Raw data (.json)"],
+                  ] as const).map(([fmt, label]) => (
+                    <button key={fmt}
+                      onClick={() => {
+                        setExportOpen(false);
+                        const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+                        fetch(`${apiBase}/api/v1/chat/sessions/${sessionId}/export?format=${fmt}`, {
+                          headers: authHeaders(),
+                        })
+                          .then(async (r) => {
+                            if (!r.ok) throw new Error(String(r.status));
+                            return r.blob();
+                          })
+                          .then((blob) => {
+                            const a = document.createElement("a");
+                            a.href = URL.createObjectURL(blob);
+                            a.download = `conversation-${sessionId.slice(0, 8)}.${fmt}`;
+                            a.click();
+                            URL.revokeObjectURL(a.href);
+                          })
+                          .catch(() => {});
+                      }}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-slate-300 transition-colors first:rounded-t-xl last:rounded-b-xl hover:bg-[#111827] hover:text-emerald-400"
+                    >
+                      <Download className="h-3 w-3 text-slate-600" /> {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <Link
               href={`/voice?dept=${deptId}`}
               className="flex items-center gap-1.5 rounded-lg border border-[#1f2937] bg-[#111827] px-3 py-1.5 text-xs text-slate-400 transition-all hover:border-[#374151] hover:text-slate-200"

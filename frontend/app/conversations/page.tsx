@@ -80,18 +80,24 @@ function DetailDrawer({
     return () => { alive = false; };
   }, [sessionId]);
 
-  function exportSession(format: "json" | "csv") {
-    const token = getToken();
+  const [exportMenu, setExportMenu] = useState(false);
+
+  function exportSession(format: "pdf" | "txt" | "csv" | "json") {
     const url = `${API}/api/v1/chat/sessions/${sessionId}/export?format=${format}`;
     fetch(url, { headers: authHeaders() })
-      .then((r) => r.blob())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`Export failed (${r.status})`);
+        return r.blob();
+      })
       .then((blob) => {
         const a = document.createElement("a");
         a.href = URL.createObjectURL(blob);
         a.download = `conversation-${sessionId.slice(0, 8)}.${format}`;
         a.click();
-      });
-    void token;
+        URL.revokeObjectURL(a.href);
+        setExportMenu(false);
+      })
+      .catch(() => setExportMenu(false));
   }
 
   return (
@@ -105,10 +111,27 @@ function DetailDrawer({
             </span>
           </div>
           <div className="flex items-center gap-2">
-            <button onClick={() => exportSession("json")} title="Export JSON"
-              className="rounded-lg border border-[#1f2937] p-1.5 text-slate-500 hover:text-amber-400">
-              <Download className="h-3.5 w-3.5" />
-            </button>
+            <div className="relative">
+              <button onClick={() => setExportMenu((v) => !v)} title="Export transcript"
+                className="rounded-lg border border-[#1f2937] p-1.5 text-slate-500 hover:text-amber-400">
+                <Download className="h-3.5 w-3.5" />
+              </button>
+              {exportMenu && (
+                <div className="absolute right-0 top-9 z-10 w-40 overflow-hidden rounded-xl border border-[#1f2937] bg-[#0c111d] shadow-2xl">
+                  {([
+                    ["pdf", "PDF document"],
+                    ["txt", "Text (.txt)"],
+                    ["csv", "Spreadsheet (.csv)"],
+                    ["json", "Raw data (.json)"],
+                  ] as const).map(([fmt, label]) => (
+                    <button key={fmt} onClick={() => exportSession(fmt)}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs text-slate-300 transition-colors first:rounded-t-xl last:rounded-b-xl hover:bg-[#111827] hover:text-amber-400">
+                      <Download className="h-3 w-3 text-slate-600" /> {label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
             <button onClick={onClose} className="rounded-lg border border-[#1f2937] p-1.5 text-slate-500 hover:text-red-400">
               <X className="h-3.5 w-3.5" />
             </button>
