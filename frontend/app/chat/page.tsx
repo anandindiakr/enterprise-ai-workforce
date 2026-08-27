@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import Link from "next/link";
-import { authHeaders } from "@/lib/auth";
+import { authHeaders, getToken } from "@/lib/auth";
 import {
   Send,
   Paperclip,
@@ -224,7 +224,12 @@ export default function ChatPage() {
     const wsBase = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8080";
     setWsState("connecting");
 
-    const ws = new WebSocket(`${wsBase}/api/v1/ws/chat/${sessionId}`);
+    // JWT goes on the socket URL so the backend can attribute the session to
+    // the caller's tenant — without it every chat is filed under "default".
+    const token = getToken();
+    const ws = new WebSocket(
+      `${wsBase}/api/v1/ws/chat/${sessionId}${token ? `?token=${encodeURIComponent(token)}` : ""}`
+    );
     wsRef.current = ws;
 
     ws.onopen = () => setWsState("open");

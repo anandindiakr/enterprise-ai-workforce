@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import Link from "next/link";
-import { authHeaders } from "@/lib/auth";
+import { authHeaders, getToken } from "@/lib/auth";
 import { BrowserVAD } from "@/lib/vad";
 import {
   Mic, MicOff, PhoneOff,
@@ -224,7 +224,11 @@ export default function VoicePage() {
   const _startWS = useCallback(() => {
     const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
     const wsBase  = apiBase.replace(/^http/, "ws");
-    const ws      = new WebSocket(`${wsBase}/api/v1/ws/voice/${sessionId}`);
+    // JWT on the socket URL attributes the voice session to the caller's tenant.
+    const token = getToken();
+    const ws      = new WebSocket(
+      `${wsBase}/api/v1/ws/voice/${sessionId}${token ? `?token=${encodeURIComponent(token)}` : ""}`
+    );
     ws.binaryType = "arraybuffer";
     wsRef.current = ws;
 
