@@ -36,6 +36,11 @@ class AppSettings(BaseSettings):
     # Set ADMIN_PASSWORD and AGENT_PASSWORD in your .env file.
     admin_password: str = "change-me-in-env"
     agent_password: str = "change-me-agent"
+    # Set ADMIN_PASSWORD_FORCE=true to push the env password onto an existing
+    # account at startup. Without it, a password changed via the UI/2FA flow
+    # is NEVER overwritten by restarts (the env value only seeds new accounts).
+    admin_password_force: bool = False
+    agent_password_force: bool = False
 
     # --- Company branding (used by agent personas) ---
     # Set these in .env so every agent speaks on behalf of your organisation.

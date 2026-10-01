@@ -78,15 +78,18 @@ async def init_db() -> None:
             admin.scopes = ["chat", "voice", "workflows", "audit"]
             admin.is_superuser = True
             admin.is_active = True
-            # Sync password when the env var has changed to a real value.
-            # Placeholder defaults are never used to overwrite the stored hash,
-            # otherwise a UI-set password would be clobbered on every restart.
+            # Sync password ONLY on explicit operator request (ADMIN_PASSWORD_FORCE).
+            # Otherwise a password changed through the UI would be silently
+            # reverted to the env value on every restart.
             if (
                 settings.admin_password not in _PLACEHOLDER_PASSWORDS
                 and not verify_password(settings.admin_password, admin.hashed_password)
             ):
-                admin.hashed_password = hash_password(settings.admin_password)
-                logger.info("Admin password updated from ADMIN_PASSWORD env var.")
+                if getattr(settings, "admin_password_force", False):
+                    admin.hashed_password = hash_password(settings.admin_password)
+                    logger.warning("Admin password force-updated from ADMIN_PASSWORD env var (ADMIN_PASSWORD_FORCE=true).")
+                else:
+                    logger.info("Admin password differs from ADMIN_PASSWORD env var (likely changed via UI) — keeping stored password.")
             else:
                 logger.info("Admin account verified (password unchanged).")
 
@@ -106,13 +109,16 @@ async def init_db() -> None:
         else:
             agent.roles = ["agent"]
             agent.is_active = True
-            # Sync password when the env var has changed to a real value.
+            # Sync password ONLY on explicit operator request (AGENT_PASSWORD_FORCE).
             if (
                 settings.agent_password not in _PLACEHOLDER_PASSWORDS
                 and not verify_password(settings.agent_password, agent.hashed_password)
             ):
-                agent.hashed_password = hash_password(settings.agent_password)
-                logger.info("Agent password updated from AGENT_PASSWORD env var.")
+                if getattr(settings, "agent_password_force", False):
+                    agent.hashed_password = hash_password(settings.agent_password)
+                    logger.warning("Agent password force-updated from AGENT_PASSWORD env var (AGENT_PASSWORD_FORCE=true).")
+                else:
+                    logger.info("Agent password differs from AGENT_PASSWORD env var (likely changed via UI) — keeping stored password.")
             else:
                 logger.info("Agent account verified (password unchanged).")
 
