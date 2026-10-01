@@ -79,7 +79,7 @@ function ProductModal({
               placeholder="What is it, what's included, who it's for…"
               className={`${inputCls} min-h-[90px] resize-y`} />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-400">Category</label>
               <select value={form.category} onChange={(e) => setForm((f) => ({ ...f, category: e.target.value }))}
@@ -93,7 +93,7 @@ function ProductModal({
                 placeholder="e.g. $499 or Contact us" className={inputCls} />
             </div>
           </div>
-          <div className="grid grid-cols-2 gap-3 items-end">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 items-end">
             <div>
               <label className="mb-1 block text-xs font-medium text-slate-400">SKU (optional)</label>
               <input value={form.sku} onChange={(e) => setForm((f) => ({ ...f, sku: e.target.value }))}

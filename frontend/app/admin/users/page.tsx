@@ -101,7 +101,7 @@ function UserFormModal({ mode, initial, onClose, onSaved }: UserFormProps) {
         </div>
 
         <div className="space-y-3">
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Username" icon={User}>
               <input
                 type="text"
@@ -143,7 +143,7 @@ function UserFormModal({ mode, initial, onClose, onSaved }: UserFormProps) {
             />
           </Field>
 
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <Field label="Role" icon={Shield}>
               <select
                 value={role}
@@ -333,6 +333,7 @@ export default function UserManagementPage() {
             No users found.
           </div>
         ) : (
+          <div className="overflow-x-auto">
           <table className="w-full min-w-[720px] text-sm">
             <thead>
               <tr className="border-b border-[#1f2937] text-[10px] uppercase tracking-widest text-slate-600">
@@ -410,6 +411,7 @@ export default function UserManagementPage() {
               ))}
             </tbody>
           </table>
+          </div>
         )}
       </div>
     </div>

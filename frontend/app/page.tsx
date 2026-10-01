@@ -169,7 +169,7 @@ export default function DashboardPage() {
   });
 
   return (
-    <div className="px-8 py-8 max-w-screen-2xl">
+    <div className="px-4 py-6 max-w-screen-2xl sm:px-8 sm:py-8">
       {/* ── Header ─────────────────────────────────────────── */}
       <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
         <div>
@@ -192,7 +192,7 @@ export default function DashboardPage() {
             </span>
           </div>
           <h1
-            className="text-4xl font-bold tracking-tight text-slate-100"
+            className="text-3xl font-bold tracking-tight text-slate-100 sm:text-4xl"
             style={{ fontFamily: "var(--font-syne)" }}
           >
             AI Workforce

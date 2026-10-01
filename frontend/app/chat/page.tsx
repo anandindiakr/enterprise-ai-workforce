@@ -498,7 +498,7 @@ export default function ChatPage() {
   return (
     <div className="flex h-full overflow-hidden">
       {/* ── Left panel: dept selector ──────────────────────── */}
-      <aside className="flex w-[200px] flex-shrink-0 flex-col border-r border-[#1f2937] bg-[#070d1a]">
+      <aside className="hidden md:flex w-[200px] flex-shrink-0 flex-col border-r border-[#1f2937] bg-[#070d1a]">
         {/* Back */}
         <div className="flex h-12 items-center border-b border-[#1f2937] px-3">
           <Link
@@ -612,24 +612,35 @@ export default function ChatPage() {
       {/* ── Main chat area ─────────────────────────────────── */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Chat header */}
-        <div className="flex h-12 flex-shrink-0 items-center justify-between border-b border-[#1f2937] bg-[#0a0f1a] px-5">
-          <div className="flex items-center gap-2.5">
-            <div className={`rounded-md p-1.5 ${dept.colorBg} border ${dept.colorBorder}`}>
+        <div className="flex h-12 flex-shrink-0 items-center justify-between gap-2 border-b border-[#1f2937] bg-[#0a0f1a] px-3 sm:px-5">
+          <div className="flex min-w-0 items-center gap-2.5">
+            {/* Mobile department selector (sidebar is hidden below md) */}
+            <select
+              value={deptId}
+              onChange={(e) => setDeptId(e.target.value)}
+              aria-label="Department"
+              className="rounded-md border border-[#1f2937] bg-[#070d1a] px-1.5 py-1 text-xs text-slate-300 focus:border-amber-500/50 focus:outline-none md:hidden"
+            >
+              {DEPARTMENTS.map((d) => (
+                <option key={d.id} value={d.id}>{d.label}</option>
+              ))}
+            </select>
+            <div className={`hidden rounded-md p-1.5 sm:block ${dept.colorBg} border ${dept.colorBorder}`}>
               <Icon className={`h-4 w-4 ${dept.colorText}`} />
             </div>
-            <div>
-              <span className="text-sm font-medium text-slate-100">{dept.label} Agent</span>
-              <span className="ml-2 text-[11px] text-slate-500">AI-powered</span>
+            <div className="min-w-0">
+              <span className="truncate text-sm font-medium text-slate-100">{dept.label} Agent</span>
+              <span className="ml-2 hidden text-[11px] text-slate-500 lg:inline">AI-powered</span>
             </div>
           </div>
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 sm:gap-3">
             {/* Agent Handoff dropdown — click or hover to open */}
             <div className="relative group">
               <button
                 onClick={() => setShowTransfer(!showTransfer)}
                 className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs transition-all hover:border-[#374151] hover:text-slate-200 ${showTransfer ? "border-amber-500/50 text-amber-300" : "border-[#1f2937] text-slate-400"}`}
               >
-                <ArrowRightLeft className="h-3 w-3" /> Transfer
+                <ArrowRightLeft className="h-3 w-3" /><span className="hidden sm:inline"> Transfer</span>
               </button>
               <div
                 className={`absolute right-0 top-full mt-1 w-44 rounded-lg border border-[#1f2937] bg-[#0a0f1a] shadow-xl transition-all z-50 ${showTransfer ? "opacity-100 visible" : "opacity-0 invisible group-hover:opacity-100 group-hover:visible"}`}
@@ -659,7 +670,7 @@ export default function ChatPage() {
                 title="Export conversation"
                 className="flex items-center gap-1.5 rounded-lg border border-[#1f2937] px-3 py-1.5 text-xs text-slate-400 transition-colors hover:border-emerald-500/30 hover:text-emerald-400 disabled:opacity-30"
               >
-                <Download className="h-3 w-3" /> Export
+                <Download className="h-3 w-3" /><span className="hidden sm:inline"> Export</span>
               </button>
               {exportOpen && (
                 <div className="absolute right-0 top-9 z-20 w-44 overflow-hidden rounded-xl border border-[#1f2937] bg-[#0c111d] shadow-2xl">
@@ -701,8 +712,7 @@ export default function ChatPage() {
               href={`/voice?dept=${deptId}`}
               className="flex items-center gap-1.5 rounded-lg border border-[#1f2937] bg-[#111827] px-3 py-1.5 text-xs text-slate-400 transition-all hover:border-[#374151] hover:text-slate-200"
             >
-              <Mic className="h-3 w-3" />
-              Switch to Voice
+              <Mic className="h-3 w-3" /><span className="hidden sm:inline"> Switch to Voice</span>
             </Link>
             <div className="relative">
               <button
@@ -728,7 +738,7 @@ export default function ChatPage() {
         </div>
 
         {/* Messages */}
-        <div className="flex-1 overflow-y-auto space-y-4 px-6 py-5">
+        <div className="flex-1 overflow-y-auto space-y-4 px-3 py-4 sm:px-6 sm:py-5">
           {messages.map((msg) => {
             const isUser = msg.role === "user";
             const d = msg.dept ? getDept(msg.dept) : dept;
@@ -796,7 +806,7 @@ export default function ChatPage() {
         </div>
 
         {/* Input area */}
-        <div className="flex-shrink-0 border-t border-[#1f2937] bg-[#070d1a] px-5 py-4">
+        <div className="flex-shrink-0 border-t border-[#1f2937] bg-[#070d1a] px-3 py-3 sm:px-5 sm:py-4">
           <div className="flex items-end gap-3">
             {/* Hidden file input */}
             <input

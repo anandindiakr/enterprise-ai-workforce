@@ -146,7 +146,8 @@ function AuditLogContent() {
       {/* Table */}
       <div className="flex-1 overflow-auto px-6 py-4">
         <div className="rounded-2xl border border-[#1f2937] overflow-hidden">
-          <table className="w-full text-xs">
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[720px] text-xs">
             <thead>
               <tr className="border-b border-[#1f2937] bg-[#0c111d]">
                 {["Timestamp", "Action", "User", "Resource", "IP Address", "Details"].map((h) => (
@@ -204,6 +205,7 @@ function AuditLogContent() {
               )}
             </tbody>
           </table>
+          </div>
         </div>
 
         {/* Pagination */}

@@ -635,7 +635,7 @@ function UsersPanel({ apiBase }: { apiBase: string }) {
       {showForm && (
         <div className="rounded-xl border border-amber-500/20 bg-[#0c111d] p-5 space-y-3">
           <h3 className="text-[11px] font-mono uppercase tracking-widest text-amber-500/70 mb-1">New User</h3>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="mb-1 block text-[11px] font-medium text-slate-400">Username *</label>
               <input value={username} onChange={(e) => setUsername(e.target.value)} placeholder="john_doe" className={inputCls} />

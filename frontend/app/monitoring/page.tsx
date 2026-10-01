@@ -121,7 +121,7 @@ function UserStatsPanel() {
 
       {/* Summary row */}
       {data && (
-        <div className="grid grid-cols-5 gap-2 mb-4">
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2 mb-4">
           {[
             { label: "Total", value: data.summary.total_users, color: "text-slate-300" },
             { label: "Active", value: data.summary.active_users, color: "text-emerald-400" },
@@ -536,7 +536,7 @@ function MonitoringContent() {
           {showConfig && (
             <div className="mb-4 rounded-xl border border-amber-500/20 bg-amber-500/5 p-4 space-y-3">
               <p className="text-[11px] font-semibold text-amber-400 uppercase tracking-wider">Alert Thresholds & Email Test</p>
-              <div className="grid grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="text-[11px] text-slate-500">Error Rate Warning (%)</label>
                   <input type="number" min="0" max="100" step="0.5"

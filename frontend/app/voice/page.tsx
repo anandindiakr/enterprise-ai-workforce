@@ -7,7 +7,7 @@ import { BrowserVAD } from "@/lib/vad";
 import {
   Mic, MicOff, PhoneOff,
   Star, Headphones, ShoppingCart, Users, DollarSign, Cpu, Megaphone,
-  ChevronLeft, Volume2, Radio, Activity, Zap, AlertCircle, CheckCircle,
+  ChevronLeft, Volume2, Radio, Activity, Zap, AlertCircle, CheckCircle, MessageSquare,
 } from "lucide-react";
 import { formatTime, formatDuration } from "@/lib/utils";
 
@@ -478,7 +478,7 @@ export default function VoicePage() {
   return (
     <div className="flex h-full overflow-hidden">
       {/* ── Left panel ─────────────────────────────────────── */}
-      <aside className="flex w-[200px] flex-shrink-0 flex-col border-r border-[#1f2937] bg-[#070d1a]">
+      <aside className="hidden md:flex w-[200px] flex-shrink-0 flex-col border-r border-[#1f2937] bg-[#070d1a]">
         <div className="flex h-12 items-center border-b border-[#1f2937] px-3">
           <Link href="/" className="flex items-center gap-1.5 text-xs text-slate-500 transition-colors hover:text-slate-300">
             <ChevronLeft className="h-3.5 w-3.5" />Dashboard
@@ -620,12 +620,24 @@ export default function VoicePage() {
       {/* ── Main ────────────────────────────────────────────── */}
       <div className="flex flex-1 flex-col overflow-hidden">
         {/* Header */}
-        <div className="flex h-12 flex-shrink-0 items-center justify-between border-b border-[#1f2937] bg-[#0a0f1a] px-5">
-          <div className="flex items-center gap-2.5">
-            <div className={`rounded-md p-1.5 ${dept.colorBg} border ${dept.colorBorder}`}>
+        <div className="flex h-12 flex-shrink-0 items-center justify-between gap-2 border-b border-[#1f2937] bg-[#0a0f1a] px-3 sm:px-5">
+          <div className="flex min-w-0 items-center gap-2.5">
+            {/* Mobile department selector (sidebar is hidden below md) */}
+            <select
+              value={deptId}
+              onChange={(e) => { if (!sessionActive) setDeptId(e.target.value); }}
+              disabled={sessionActive}
+              aria-label="Department"
+              className="rounded-md border border-[#1f2937] bg-[#070d1a] px-1.5 py-1 text-xs text-slate-300 focus:border-amber-500/50 focus:outline-none disabled:opacity-50 md:hidden"
+            >
+              {DEPARTMENTS.map((d) => (
+                <option key={d.id} value={d.id}>{d.label}</option>
+              ))}
+            </select>
+            <div className={`hidden rounded-md p-1.5 sm:block ${dept.colorBg} border ${dept.colorBorder}`}>
               <Icon className={`h-4 w-4 ${dept.colorText}`} />
             </div>
-            <span className="text-sm font-medium text-slate-100">{dept.label} — Voice</span>
+            <span className="truncate text-sm font-medium text-slate-100">{dept.label} — Voice</span>
             {inputMode === "ws" && wsConnected && (
               <span className="flex items-center gap-1 rounded-full border border-emerald-500/25 bg-emerald-500/10 px-2 py-0.5 text-[9px] text-emerald-400">
                 <Radio className="h-2.5 w-2.5 animate-pulse" /> WS
@@ -633,15 +645,15 @@ export default function VoicePage() {
             )}
           </div>
           <div className="flex items-center gap-2">
-            <Link href={`/chat?dept=${deptId}`} className="flex items-center gap-1.5 rounded-lg border border-[#1f2937] bg-[#111827] px-3 py-1.5 text-xs text-slate-400 transition-all hover:border-[#374151] hover:text-slate-200">
-              Switch to Chat
+            <Link href={`/chat?dept=${deptId}`} className="flex items-center gap-1.5 rounded-lg border border-[#1f2937] bg-[#111827] px-2.5 py-1.5 text-xs text-slate-400 transition-all hover:border-[#374151] hover:text-slate-200 sm:px-3">
+              <MessageSquare className="h-3 w-3" /><span className="hidden sm:inline">Switch to Chat</span>
             </Link>
           </div>
         </div>
 
-        <div className="flex flex-1 overflow-hidden">
+        <div className="flex flex-1 flex-col overflow-hidden md:flex-row">
           {/* Voice controls */}
-          <div className="flex w-[340px] flex-shrink-0 flex-col items-center justify-center gap-8 border-r border-[#1f2937] bg-[#070d1a] px-8 py-10">
+          <div className="flex w-full flex-shrink-0 flex-col items-center justify-center gap-4 border-b border-[#1f2937] bg-[#070d1a] px-6 py-6 md:w-[340px] md:gap-8 md:border-b-0 md:border-r md:px-8 md:py-10">
             {/* State */}
             <div className="text-center">
               <p className={`font-mono text-xs uppercase tracking-[0.2em] ${STATE_COLOR[voiceState]}`}>
@@ -771,7 +783,7 @@ export default function VoicePage() {
               )}
             </div>
 
-            <div className="flex-1 space-y-3 overflow-y-auto px-5 py-4">
+            <div className="flex-1 space-y-3 overflow-y-auto px-3 py-4 sm:px-5">
               {transcript.length === 0 ? (
                 <div className="flex h-full flex-col items-center justify-center gap-3 text-center">
                   <Mic className="h-8 w-8 text-slate-700" />

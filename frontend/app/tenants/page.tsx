@@ -145,7 +145,7 @@ function TenantModal({ tenant, onClose, onSaved }: {
               placeholder="admin@acme.com"
               className="mt-1 w-full rounded-lg border border-[#1f2937] bg-[#060c16] px-3 py-2 text-sm text-slate-300 placeholder-slate-600 focus:outline-none focus:border-amber-500/50" />
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
             <div>
               <label className="text-[11px] text-slate-500">Plan</label>
               <select value={form.plan} onChange={e => setForm(f => ({ ...f, plan: e.target.value }))}
@@ -307,7 +307,7 @@ function TenantStatsDrawer({ slug, onClose }: { slug: string; onClose: () => voi
                 label={`Chat Sessions: ${stats.usage.chat_sessions.total} / ${stats.usage.chat_sessions.limit}`} />
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               {[
                 { label: "Total Messages", value: stats.usage.messages.total, icon: MessageSquare },
                 { label: "Active Users",   value: stats.usage.users.active,   icon: Users },
@@ -419,7 +419,7 @@ function TenantsContent() {
         ) : (
         <>
         {/* Summary cards */}
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
           {[
             { label: "Active", value: summary.active, color: "text-emerald-400", dot: "bg-emerald-400" },
             { label: "Trial",  value: summary.trial,  color: "text-amber-400",   dot: "bg-amber-400"   },
@@ -489,7 +489,7 @@ function TenantsContent() {
             <Shield className="h-4 w-4 text-amber-400" />
             <h2 className="text-xs font-semibold text-slate-300">How Multi-Tenancy Works</h2>
           </div>
-          <div className="grid grid-cols-2 gap-3 text-[11px]">
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-[11px]">
             {[
               { icon: Users, title: "Isolated Users", desc: "Each tenant has its own user accounts. Users from Tenant A cannot see Tenant B's data." },
               { icon: MessageSquare, title: "Isolated Conversations", desc: "Chat and voice sessions are scoped to the tenant. No cross-tenant data leakage." },

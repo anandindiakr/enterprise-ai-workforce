@@ -350,7 +350,7 @@ export default function AnalyticsPage() {
                 <h3 className="mb-4 flex items-center gap-2 font-mono text-xs font-semibold uppercase tracking-widest text-slate-400">
                   <AlertTriangle className="h-3.5 w-3.5 text-red-400" /> Escalation Summary
                 </h3>
-                <div className="grid grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                   {[
                     { label: "Total", value: platform?.escalations?.total ?? 0, color: "text-slate-300" },
                     { label: "Open",  value: platform?.escalations?.open  ?? 0, color: "text-red-400"   },
