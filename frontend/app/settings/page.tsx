@@ -1360,12 +1360,23 @@ export default function SettingsPage() {
           </div>
         </FieldGroup>
         <FieldGroup label="Session">
-          <Field label="Sign Out Everywhere" description="Invalidate all active sessions">
+          <Field label="Sign Out Everywhere" description="Invalidate all active sessions on every device">
             <button
-              onClick={() => { clearAuth(); router.push("/login"); }}
+              onClick={async () => {
+                try {
+                  const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+                  await fetch(`${apiBase}/api/v1/auth/logout-all`, {
+                    method: "POST",
+                    headers: authHeaders(),
+                  }).catch(() => {});
+                } finally {
+                  clearAuth();
+                  router.push("/login");
+                }
+              }}
               className="flex items-center gap-1.5 rounded-lg border border-red-500/25 bg-red-500/10 px-3 py-1.5 text-xs text-red-400 transition-all hover:bg-red-500/15"
             >
-              <Trash2 className="h-3 w-3" /> Sign Out
+              <Trash2 className="h-3 w-3" /> Sign Out Everywhere
             </button>
           </Field>
         </FieldGroup>

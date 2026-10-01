@@ -8,9 +8,11 @@ from typing import Any
 from fastapi import Depends, Header, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from jose import JWTError, jwt
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.core.config import settings
 from app.core.exceptions import AuthenticationError, AuthorizationError
+from app.db.session import get_db
 from app.models.schemas import Principal
 
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token", auto_error=False)
@@ -25,6 +27,7 @@ def create_access_token(
     is_superuser: bool = False,
     expires_minutes: int | None = None,
     expires_in: int | None = None,  # seconds override
+    token_version: int | None = None,  # session-kill version — must match users.token_version
 ) -> str:
     """Return a signed JWT string."""
     if expires_in is not None:
@@ -42,6 +45,8 @@ def create_access_token(
         "iat": datetime.now(timezone.utc),
         "iss": settings.app_name,
     }
+    if token_version is not None:
+        payload["tv"] = token_version
     return jwt.encode(payload, settings.jwt_secret, algorithm=settings.jwt_algorithm)
 
 
@@ -57,9 +62,39 @@ def decode_token(token: str) -> dict[str, Any]:
 # ---------------------------------------------------------------------------
 
 
+async def _validate_session_version(
+    db: AsyncSession,
+    payload: dict[str, Any],
+    principal: Principal,
+) -> Principal:
+    """Reject tokens whose session was revoked (token_version bump) or whose
+    account was deleted/disabled — regardless of the JWT's own expiry."""
+    tv = payload.get("tv")
+    if tv is None:
+        return principal  # legacy token without a version claim — JWT expiry only
+    try:
+        from app.db.crud import get_user_by_username
+
+        user = await get_user_by_username(db, payload.get("sub", ""))
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account no longer exists")
+        if getattr(user, "token_version", 1) != int(tv):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail={"code": "session_revoked", "message": "This session was signed out. Please log in again."})
+        if not user.is_active:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Account is disabled")
+    except HTTPException:
+        raise
+    except Exception as exc:  # noqa: BLE001
+        # DB briefly unavailable — fail open so a blip doesn't log everyone out.
+        from loguru import logger
+        logger.warning("session version check failed open: {}", exc)
+    return principal
+
+
 async def get_principal(
     token: str | None = Depends(oauth2_scheme),
     api_key: str | None = Header(default=None, alias="x-api-key"),
+    db: AsyncSession = Depends(get_db),
 ) -> Principal:
     """Resolve the calling principal from JWT bearer or internal API key."""
     # Internal service-to-service path
@@ -73,13 +108,14 @@ async def get_principal(
         )
 
     payload = decode_token(token)
-    return Principal(
+    principal = Principal(
         user_id=payload.get("sub", "unknown"),
         tenant_id=payload.get("tenant_id"),
         roles=payload.get("roles", []),
         scopes=payload.get("scopes", []),
         is_superuser=bool(payload.get("is_superuser", False)),
     )
+    return await _validate_session_version(db, payload, principal)
 
 
 async def optional_principal(

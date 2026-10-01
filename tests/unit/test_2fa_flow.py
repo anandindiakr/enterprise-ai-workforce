@@ -31,7 +31,15 @@ def _principal(user) -> Principal:
 
 
 class _FakeRequest:
-    pass
+    client = None
+
+
+class _FakeBackgroundTasks:
+    def add_task(self, *a, **kw):
+        pass
+
+
+BT = _FakeBackgroundTasks()
 
 
 @pytest.mark.asyncio
@@ -56,7 +64,7 @@ async def test_2fa_full_flow(db_session, monkeypatch):
     token = await login(
         _FakeRequest(),
         TokenRequest(username="alice", password="secret123"),
-        db=db_session,
+        BT, db=db_session,
     )
     assert token.access_token
 
@@ -78,7 +86,7 @@ async def test_2fa_full_flow(db_session, monkeypatch):
         await login(
             _FakeRequest(),
             TokenRequest(username="alice", password="secret123"),
-            db=db_session,
+            BT, db=db_session,
         )
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail["code"] == "2fa_required"
@@ -88,7 +96,7 @@ async def test_2fa_full_flow(db_session, monkeypatch):
         await login(
             _FakeRequest(),
             TokenRequest(username="alice", password="secret123", totp_code="000000"),
-            db=db_session,
+            BT, db=db_session,
         )
     assert exc_info.value.detail["code"] == "2fa_invalid"
 
@@ -97,7 +105,7 @@ async def test_2fa_full_flow(db_session, monkeypatch):
     token = await login(
         _FakeRequest(),
         TokenRequest(username="alice", password="secret123", totp_code=code),
-        db=db_session,
+        BT, db=db_session,
     )
     assert token.access_token
 
@@ -106,7 +114,7 @@ async def test_2fa_full_flow(db_session, monkeypatch):
         await login(
             _FakeRequest(),
             TokenRequest(username="alice", password="wrongpass", totp_code=code),
-            db=db_session,
+            BT, db=db_session,
         )
 
     # ── Disable with password + code ───────────────────────────────
@@ -121,6 +129,6 @@ async def test_2fa_full_flow(db_session, monkeypatch):
     token = await login(
         _FakeRequest(),
         TokenRequest(username="alice", password="secret123"),
-        db=db_session,
+        BT, db=db_session,
     )
     assert token.access_token

@@ -40,9 +40,12 @@ export default function LoginPage() {
       });
       if (!res.ok) {
         const body = await res.json().catch(() => ({})) as { detail?: string | { code?: string; message?: string } };
-        // Distinguish "2FA code required / invalid" from wrong credentials
+        // Distinguish lockout / 2FA from wrong credentials
         const detail = body.detail;
         if (typeof detail === "object" && detail !== null) {
+          if (detail.code === "account_locked") {
+            throw new Error(detail.message ?? "Account temporarily locked due to failed attempts");
+          }
           if (detail.code === "2fa_required") {
             setNeeds2fa(true);
             throw new Error(detail.message ?? "Enter your two-factor authentication code");
@@ -51,6 +54,9 @@ export default function LoginPage() {
             throw new Error("Invalid or expired 2FA code — try the next one");
           }
           throw new Error(detail.message ?? "Invalid credentials");
+        }
+        if (res.status === 429) {
+          throw new Error(typeof detail === "string" ? detail : "Too many attempts — try again later");
         }
         throw new Error(detail ?? "Invalid credentials");
       }

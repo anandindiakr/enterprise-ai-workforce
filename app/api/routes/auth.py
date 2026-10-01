@@ -20,6 +20,57 @@ from app.security.auth import create_access_token, get_principal, require_admin
 # In-memory password-reset token store (Redis-backed in production, simple dict for now)
 _reset_tokens: dict[str, tuple[str, datetime]] = {}  # token -> (username, expiry)
 
+# ── Failed-login lockout ─────────────────────────────────────────────────────
+# Per-username counters in the API process. After MAX failures the account is
+# locked for LOCKOUT_MINUTES; a correct password clears it immediately.
+# Note: (attempts, locked_until)
+_login_failures: dict[str, tuple[int, datetime]] = {}
+LOGIN_MAX_FAILURES = 5
+LOGIN_LOCKOUT_MINUTES = 15
+
+
+def _lockout_remaining_seconds(username: str) -> int:
+    """Seconds until the lock expires, or 0 if the user is not locked."""
+    entry = _login_failures.get(username)
+    if not entry:
+        return 0
+    _, locked_until = entry
+    remaining = int((locked_until - datetime.now(timezone.utc)).total_seconds())
+    return max(0, remaining)
+
+
+def _record_login_failure(username: str, db: AsyncSession, background_tasks: BackgroundTasks, ip: str | None = None) -> None:
+    """Count a failed attempt; lock the account at the threshold. The failed
+    login is recorded in the audit log so an admin can see the attack."""
+    attempts, _ = _login_failures.get(username, (0, datetime.min.replace(tzinfo=timezone.utc)))
+    attempts += 1
+    locked_until = datetime.min.replace(tzinfo=timezone.utc)
+    if attempts >= LOGIN_MAX_FAILURES:
+        locked_until = datetime.now(timezone.utc) + timedelta(minutes=LOGIN_LOCKOUT_MINUTES)
+    _login_failures[username] = (attempts, locked_until)
+
+    async def _audit() -> None:
+        try:
+            await crud.write_audit_log(
+                db,
+                tenant_id="default",
+                user_id=username,
+                action="auth.login_failed",
+                resource_type="auth",
+                ip_address=ip,
+                details={"attempts": attempts, "locked": locked_until > datetime.now(timezone.utc)},
+            )
+            await db.commit()
+        except Exception:  # noqa: BLE001
+            pass
+
+    background_tasks.add_task(_audit)
+
+
+def _clear_login_failures(username: str) -> None:
+    _login_failures.pop(username, None)
+
+
 router = APIRouter(prefix="/auth", tags=["auth"])
 users_router = APIRouter(prefix="/users", tags=["users"])
 
@@ -148,10 +199,27 @@ class ResetPasswordRequest(BaseModel):
 async def login(
     request: Request,
     payload: TokenRequest,
+    background_tasks: BackgroundTasks,
     db: AsyncSession = Depends(get_db),
 ) -> TokenResponse:
-    user = await crud.authenticate_user(db, payload.username, payload.password)
+    client_ip = request.client.host if request.client else None
+    username = payload.username.strip()
+
+    # ── Failed-login lockout ─────────────────────────────────────────────
+    remaining = _lockout_remaining_seconds(username)
+    if remaining > 0:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail={
+                "code": "account_locked",
+                "message": f"Too many failed attempts. Account is locked — try again in {remaining // 60 + 1} min.",
+                "retry_after_seconds": remaining,
+            },
+        )
+
+    user = await crud.authenticate_user(db, username, payload.password)
     if not user:
+        _record_login_failure(username, db, background_tasks, ip=client_ip)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
@@ -167,11 +235,15 @@ async def login(
             )
         totp = pyotp.TOTP(user.totp_secret)
         if not totp.verify(code, valid_window=1):
+            _record_login_failure(username, db, background_tasks, ip=client_ip)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail={"code": "2fa_invalid", "message": "Invalid or expired 2FA code"},
             )
+    # Credentials fully verified — clear any accumulated failures.
+    _clear_login_failures(username)
     expires_in = 3600
+    tv = int(getattr(user, "token_version", 1))
     token = create_access_token(
         subject=user.username,
         roles=user.roles,
@@ -179,6 +251,7 @@ async def login(
         tenant_id=user.tenant_id,
         is_superuser=bool(getattr(user, "is_superuser", False)),
         expires_in=expires_in,
+        token_version=tv,
     )
     # Refresh token is a longer-lived JWT (7 days)
     refresh_token = create_access_token(
@@ -188,6 +261,7 @@ async def login(
         tenant_id=user.tenant_id,
         is_superuser=bool(getattr(user, "is_superuser", False)),
         expires_in=7 * 24 * 3600,
+        token_version=tv,
     )
     return TokenResponse(access_token=token, expires_in=expires_in, refresh_token=refresh_token)
 
@@ -213,7 +287,17 @@ async def refresh_token(
     if not user or not user.is_active:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found or inactive")
 
+    # Session invalidation: a refresh token issued before the token_version bump
+    # (Sign Out Everywhere / password change) must not mint a new session.
+    token_tv = claims.get("tv")
+    if token_tv is not None and int(token_tv) != int(getattr(user, "token_version", 1)):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail={"code": "session_revoked", "message": "This session was signed out. Please log in again."},
+        )
+
     expires_in = 3600
+    tv = int(getattr(user, "token_version", 1))
     new_access = create_access_token(
         subject=user.username,
         roles=user.roles,
@@ -221,6 +305,7 @@ async def refresh_token(
         tenant_id=user.tenant_id,
         is_superuser=bool(getattr(user, "is_superuser", False)),
         expires_in=expires_in,
+        token_version=tv,
     )
     new_refresh = create_access_token(
         subject=user.username,
@@ -229,6 +314,7 @@ async def refresh_token(
         tenant_id=user.tenant_id,
         is_superuser=bool(getattr(user, "is_superuser", False)),
         expires_in=7 * 24 * 3600,
+        token_version=tv,
     )
     return TokenResponse(access_token=new_access, expires_in=expires_in, refresh_token=new_refresh)
 
@@ -321,8 +407,26 @@ async def change_password(
     if not crud.verify_password(payload.current_password, user.hashed_password):
         raise HTTPException(status_code=400, detail="Current password is incorrect")
     await crud.change_password(db, user, payload.new_password)
+    # Invalidate every existing session — anyone holding an old token is logged out.
+    user.token_version = int(getattr(user, "token_version", 1)) + 1
     await db.commit()
-    return {"message": "Password updated successfully"}
+    return {"message": "Password updated successfully — all other sessions have been signed out"}
+
+
+@router.post("/logout-all", status_code=200)
+async def logout_all_sessions(
+    principal: Principal = Depends(get_principal),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Invalidate ALL active sessions for the current user (every device) by
+    bumping the user's token_version. All JWTs issued before this moment —
+    including the caller's — stop working immediately."""
+    user = await crud.get_user_by_username(db, principal.user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    user.token_version = int(getattr(user, "token_version", 1)) + 1
+    await db.commit()
+    return {"message": "Signed out of all sessions on all devices"}
 
 
 # ── Two-factor authentication (TOTP) ──────────────────────────────────────────

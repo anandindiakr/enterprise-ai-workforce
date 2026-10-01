@@ -152,6 +152,7 @@ class AppSettings(BaseSettings):
     email_from: str = "noreply@ai-workforce.io"
     resend_api_key: str = ""      # alternative to SMTP
     escalation_email_to: str = ""  # on-call team address for escalation alerts
+    alert_email: str = ""  # service-down alert recipient (defaults to admin emails if empty)
 
     # --- File upload ---
     upload_dir: str = "/tmp/ai_workforce_uploads"

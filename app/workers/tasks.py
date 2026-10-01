@@ -272,3 +272,114 @@ def get_workflow_result(self, task_id: str) -> dict[str, Any]:
         return _run(_fetch()) or {"task_id": task_id, "status": "pending"}
     except Exception as exc:  # noqa: BLE001
         return {"task_id": task_id, "status": "error", "error": str(exc)}
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# System health monitor — alerts the admin when a service goes down
+# ─────────────────────────────────────────────────────────────────────────────
+
+@celery_app.task(name="app.workers.tasks.check_system_health", bind=True)
+def check_system_health(self) -> dict[str, Any]:
+    """Every 2 minutes: probe each backing service; when one fails (or
+    recovers), email the admin exactly once per incident.
+
+    Recipients: ALERT_EMAIL env var if set, otherwise every active admin's
+    email address. Alert state lives in Redis so restarts don't resend.
+    """
+    try:
+        async def _check() -> dict[str, Any]:
+            import redis.asyncio as aioredis
+
+            from app.core.config import settings
+            from app.db.session import AsyncSessionLocal
+            from app.services.notification_service import send_generic_email
+
+            r = aioredis.from_url(settings.redis_url, decode_responses=True)
+            results: dict[str, str] = {}
+
+            # ── Probe each service ───────────────────────────────────────
+            # PostgreSQL
+            try:
+                from sqlalchemy import text
+                async with AsyncSessionLocal() as db:
+                    await db.execute(text("SELECT 1"))
+                results["postgresql"] = "healthy"
+            except Exception as exc:  # noqa: BLE001
+                results["postgresql"] = f"unhealthy: {exc}"
+
+            # Redis (we're already talking to it — this covers the broker)
+            try:
+                await r.ping()
+                results["redis"] = "healthy"
+            except Exception as exc:  # noqa: BLE001
+                results["redis"] = f"unhealthy: {exc}"
+
+            # API service (this task runs in the worker — probe the API container)
+            try:
+                import aiohttp
+                async with aiohttp.ClientSession() as sess:
+                    async with sess.get(
+                        "http://api:8000/api/v1/health",
+                        timeout=aiohttp.ClientTimeout(total=5),
+                    ) as resp:
+                        results["api"] = "healthy" if resp.status == 200 else f"unhealthy: http {resp.status}"
+            except Exception as exc:  # noqa: BLE001
+                results["api"] = f"unhealthy: {exc}"
+
+            # ── Compare with previous state, alert on transitions ────────
+            now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            transitions: list[tuple[str, str, str]] = []  # (service, from, to)
+            for svc, state in results.items():
+                prev = await r.get(f"health:alert:{svc}")
+                cur = "healthy" if state == "healthy" else "unhealthy"
+                if prev is None:
+                    # First run — only alert if something is already broken.
+                    if cur == "unhealthy":
+                        transitions.append((svc, "unknown", cur))
+                elif prev != cur:
+                    transitions.append((svc, prev, cur))
+                await r.setex(f"health:alert:{svc}", 3600, cur)
+
+            if transitions:
+                # Resolve recipients
+                to_addrs: list[str] = []
+                if settings.alert_email:
+                    to_addrs.append(settings.alert_email)
+                else:
+                    try:
+                        async with AsyncSessionLocal() as db:
+                            from sqlalchemy import select
+                            from app.db.models import UserModel
+                            rows = await db.execute(
+                                select(UserModel.email).where(
+                                    UserModel.is_active.is_(True),
+                                    UserModel.roles.contains('["admin"]'),
+                                )
+                            )
+                            to_addrs.extend(e for (e,) in rows if e and "@" in e)
+                    except Exception:  # noqa: BLE001
+                        pass
+
+                lines = [f"Service status change detected at {now}:\n"]
+                for svc, old, new in transitions:
+                    tag = "RECOVERED" if new == "healthy" else "DOWN"
+                    lines.append(f"- {svc}: {old} -> {new} [{tag}] — {results.get(svc, '')}")
+                body = "\n".join(lines)
+                subject = "[AI Workforce] Service " + ", ".join(
+                    f"{svc} {'recovered' if new == 'healthy' else 'DOWN'}" for svc, _, new in transitions
+                )
+
+                for addr in dict.fromkeys(to_addrs):  # dedupe, preserve order
+                    try:
+                        await send_generic_email(addr, subject, body)
+                        logger.info("Health alert emailed to %s: %s", addr, subject)
+                    except Exception as exc:  # noqa: BLE001
+                        logger.error("Health alert email to %s failed: %s", addr, exc)
+
+            await r.aclose()
+            return {"checked_at": now, "results": results, "transitions": len(transitions)}
+
+        return _run(_check())
+    except Exception as exc:  # noqa: BLE001
+        logger.error("check_system_health failed: %s", exc)
+        raise self.retry(exc=exc, countdown=60, max_retries=2)

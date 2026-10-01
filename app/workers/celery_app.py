@@ -38,5 +38,9 @@ celery_app.conf.update(
             "task": "app.workers.tasks.sync_analytics_snapshot",
             "schedule": 900.0,  # every 15 minutes
         },
+        "check-system-health": {
+            "task": "app.workers.tasks.check_system_health",
+            "schedule": 120.0,  # every 2 minutes — emails admin on service failure/recovery
+        },
     },
 )
