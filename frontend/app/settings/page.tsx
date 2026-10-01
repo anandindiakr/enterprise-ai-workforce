@@ -891,6 +891,14 @@ export default function SettingsPage() {
   const [newPw,     setNewPw]     = useState("");
   const [confirmPw, setConfirmPw] = useState("");
 
+  /* Two-factor authentication */
+  const [twofaEnabled,     setTwofaEnabled]     = useState<boolean | null>(null);
+  const [twofaSetup,       setTwofaSetup]       = useState<{ secret: string; qr_png: string } | null>(null);
+  const [twofaCode,        setTwofaCode]        = useState("");
+  const [twofaDisablePw,   setTwofaDisablePw]   = useState("");
+  const [twofaDisableCode, setTwofaDisableCode] = useState("");
+  const [twofaBusy,        setTwofaBusy]        = useState(false);
+
   /* System */
   const [streamingChat, setStreamingChat] = useState(true);
   const [autoScroll,    setAutoScroll]    = useState(true);
@@ -928,6 +936,11 @@ export default function SettingsPage() {
         (data.keys ?? []).forEach((k: { key: string; is_set: boolean }) => { status[k.key] = k.is_set; });
         setServerKeyStatus(status);
       })
+      .catch(() => {});
+    // Fetch 2FA status
+    fetch(`${apiBase}/api/v1/auth/2fa/status`, { headers: authHeaders() })
+      .then((r) => r.ok ? r.json() : null)
+      .then((d) => { if (d && typeof d.enabled === "boolean") setTwofaEnabled(d.enabled); })
       .catch(() => {});
   }, []);
 
@@ -1013,6 +1026,74 @@ export default function SettingsPage() {
       setError(e.message ?? "Password change failed");
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function startTwofaSetup() {
+    setError(null);
+    setTwofaBusy(true);
+    try {
+      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+      const res = await fetch(`${apiBase}/api/v1/auth/2fa/setup`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? `${res.status}`);
+      const data = await res.json();
+      setTwofaSetup({ secret: data.secret, qr_png: data.qr_png });
+      setTwofaCode("");
+    } catch (e: any) {
+      setError(e.message ?? "2FA setup failed");
+    } finally {
+      setTwofaBusy(false);
+    }
+  }
+
+  async function enableTwofa() {
+    if (!twofaCode.trim()) { setError("Enter the 6-digit code from your authenticator app"); return; }
+    setError(null);
+    setTwofaBusy(true);
+    try {
+      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+      const res = await fetch(`${apiBase}/api/v1/auth/2fa/enable`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ code: twofaCode.trim() }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? `${res.status}`);
+      setTwofaEnabled(true);
+      setTwofaSetup(null);
+      setTwofaCode("");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e: any) {
+      setError(e.message ?? "2FA enable failed");
+    } finally {
+      setTwofaBusy(false);
+    }
+  }
+
+  async function disableTwofa() {
+    if (!twofaDisablePw || !twofaDisableCode.trim()) { setError("Enter your password and a current 2FA code to disable"); return; }
+    setError(null);
+    setTwofaBusy(true);
+    try {
+      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8080";
+      const res = await fetch(`${apiBase}/api/v1/auth/2fa/disable`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", ...authHeaders() },
+        body: JSON.stringify({ password: twofaDisablePw, code: twofaDisableCode.trim() }),
+      });
+      if (!res.ok) throw new Error((await res.json().catch(() => ({}))).detail ?? `${res.status}`);
+      setTwofaEnabled(false);
+      setTwofaDisablePw("");
+      setTwofaDisableCode("");
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2500);
+    } catch (e: any) {
+      setError(e.message ?? "2FA disable failed");
+    } finally {
+      setTwofaBusy(false);
     }
   }
 
@@ -1142,6 +1223,121 @@ export default function SettingsPage() {
 
     security: (
       <div className="space-y-6">
+        <FieldGroup label="Two-Factor Authentication (2FA)">
+          <div className="rounded-xl border border-[#1f2937] bg-[#0c111d] p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0">
+                <p className="text-sm text-slate-200">
+                  Authenticator app (Google Authenticator, Authy, 1Password…)
+                </p>
+                <p className="mt-0.5 text-xs text-slate-500">
+                  Requires a 6-digit code at every login in addition to your password.
+                </p>
+              </div>
+              <span className={`flex-shrink-0 rounded-full border px-2.5 py-1 text-[10px] font-semibold ${
+                twofaEnabled
+                  ? "border-emerald-500/25 bg-emerald-500/10 text-emerald-400"
+                  : "border-slate-500/25 bg-slate-500/10 text-slate-400"
+              }`}>
+                {twofaEnabled === null ? "…" : twofaEnabled ? "ENABLED" : "OFF"}
+              </span>
+            </div>
+
+            {/* Setup flow: QR + code entry */}
+            {!twofaEnabled && twofaSetup && (
+              <div className="space-y-3 rounded-lg border border-amber-500/20 bg-amber-500/5 p-3">
+                <p className="text-xs text-slate-400">
+                  1. Scan this QR code with your authenticator app (or enter the secret manually).
+                </p>
+                <div className="flex flex-col items-center gap-3 sm:flex-row sm:items-start">
+                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                  <img src={twofaSetup.qr_png} alt="2FA QR code" className="h-40 w-40 rounded-lg bg-white p-1.5" />
+                  <div className="w-full space-y-2">
+                    <label className="block text-[11px] font-medium text-slate-500">Secret (manual entry)</label>
+                    <code className="block break-all rounded-lg border border-[#1f2937] bg-[#070d1a] px-3 py-2 font-mono text-[11px] text-slate-300">
+                      {twofaSetup.secret}
+                    </code>
+                  </div>
+                </div>
+                <div>
+                  <label className="mb-1.5 block text-xs font-medium text-slate-400">
+                    2. Enter the 6-digit code the app shows to verify and enable
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      inputMode="numeric"
+                      autoComplete="one-time-code"
+                      maxLength={7}
+                      value={twofaCode}
+                      onChange={(e) => setTwofaCode(e.target.value)}
+                      placeholder="123 456"
+                      className="w-full rounded-lg border border-[#1f2937] bg-[#070d1a] px-3 py-2 font-mono text-sm tracking-widest text-slate-300 placeholder:text-slate-600 focus:border-amber-500/50 focus:outline-none"
+                    />
+                    <button
+                      onClick={enableTwofa}
+                      disabled={twofaBusy}
+                      className="flex-shrink-0 rounded-lg bg-amber-500 px-4 py-2 text-xs font-semibold text-black transition-colors hover:bg-amber-400 disabled:opacity-50"
+                    >
+                      {twofaBusy ? "Verifying…" : "Verify & Enable"}
+                    </button>
+                  </div>
+                </div>
+                <button
+                  onClick={() => { setTwofaSetup(null); setTwofaCode(""); }}
+                  className="text-xs text-slate-500 underline-offset-2 hover:text-slate-300 hover:underline"
+                >
+                  Cancel setup
+                </button>
+              </div>
+            )}
+
+            {/* Enable button when off and no setup in progress */}
+            {!twofaEnabled && !twofaSetup && (
+              <button
+                onClick={startTwofaSetup}
+                disabled={twofaBusy}
+                className="w-full rounded-lg bg-amber-500/10 border border-amber-500/20 py-2 text-xs font-medium text-amber-400 transition-all hover:bg-amber-500/20 disabled:opacity-40"
+              >
+                {twofaBusy ? "Generating…" : "Enable Two-Factor Authentication"}
+              </button>
+            )}
+
+            {/* Disable flow when enabled */}
+            {twofaEnabled && (
+              <div className="space-y-2 rounded-lg border border-red-500/20 bg-red-500/5 p-3">
+                <p className="text-xs text-slate-400">Disable 2FA (requires your password and a current code)</p>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  <input
+                    type="password"
+                    value={twofaDisablePw}
+                    onChange={(e) => setTwofaDisablePw(e.target.value)}
+                    placeholder="Password"
+                    autoComplete="current-password"
+                    className="rounded-lg border border-[#1f2937] bg-[#070d1a] px-3 py-2 text-sm text-slate-300 placeholder:text-slate-600 focus:border-red-500/40 focus:outline-none"
+                  />
+                  <input
+                    type="text"
+                    inputMode="numeric"
+                    maxLength={7}
+                    value={twofaDisableCode}
+                    onChange={(e) => setTwofaDisableCode(e.target.value)}
+                    placeholder="6-digit code"
+                    className="rounded-lg border border-[#1f2937] bg-[#070d1a] px-3 py-2 font-mono text-sm text-slate-300 placeholder:text-slate-600 focus:border-red-500/40 focus:outline-none"
+                  />
+                </div>
+                <button
+                  onClick={disableTwofa}
+                  disabled={twofaBusy}
+                  className="w-full rounded-lg border border-red-500/25 bg-red-500/10 py-2 text-xs font-medium text-red-400 transition-all hover:bg-red-500/20 disabled:opacity-40"
+                >
+                  {twofaBusy ? "Disabling…" : "Disable 2FA"}
+                </button>
+              </div>
+            )}
+          </div>
+        </FieldGroup>
+
         <FieldGroup label="Change Password">
           <div className="rounded-xl border border-[#1f2937] bg-[#0c111d] p-4 space-y-3">
             {[
@@ -1223,9 +1419,28 @@ export default function SettingsPage() {
   };
 
   return (
-    <div className="flex h-full overflow-hidden">
-      {/* ── Sidebar ──────────────────────────────────────────── */}
-      <aside className="flex w-[220px] flex-shrink-0 flex-col border-r border-[#1f2937] bg-[#070d1a]">
+    <div className="flex h-full flex-col overflow-hidden md:flex-row">
+      {/* ── Section nav: horizontal chips on mobile, sidebar on desktop ── */}
+      <div className="flex-shrink-0 overflow-x-auto border-b border-[#1f2937] bg-[#070d1a] md:hidden">
+        <div className="flex gap-1 px-2 py-2">
+          {SECTIONS.filter((s) => !s.adminOnly || user?.roles?.includes("admin")).map(({ id, label, icon: Icon }) => (
+            <button
+              key={id}
+              onClick={() => setActiveSection(id)}
+              className={`flex flex-shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs transition-all ${
+                activeSection === id
+                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                  : "text-slate-500 hover:bg-[#111827] hover:text-slate-300 border border-transparent"
+              }`}
+            >
+              <Icon className="h-3.5 w-3.5 flex-shrink-0" />
+              <span className="whitespace-nowrap">{label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <aside className="hidden w-[220px] flex-shrink-0 flex-col border-r border-[#1f2937] bg-[#070d1a] md:flex">
         <div className="flex h-14 items-center border-b border-[#1f2937] px-4">
           <div className="flex items-center gap-2.5">
             <div className="flex h-7 w-7 items-center justify-center rounded-lg bg-amber-500/10 border border-amber-500/20">

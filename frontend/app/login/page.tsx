@@ -10,6 +10,8 @@ export default function LoginPage() {
   const router = useRouter();
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
+  const [totpCode, setTotpCode]   = useState("");
+  const [needs2fa, setNeeds2fa]   = useState(false);
   const [showPw, setShowPw]     = useState(false);
   const [error, setError]       = useState("");
   const [loading, setLoading]   = useState(false);
@@ -30,11 +32,27 @@ export default function LoginPage() {
       const res = await fetch(`${apiBase}/api/v1/auth/token`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ username, password }),
+        body: JSON.stringify(
+          needs2fa
+            ? { username, password, totp_code: totpCode.trim() }
+            : { username, password },
+        ),
       });
       if (!res.ok) {
-        const body = await res.json().catch(() => ({})) as { detail?: string };
-        throw new Error(body.detail ?? "Invalid credentials");
+        const body = await res.json().catch(() => ({})) as { detail?: string | { code?: string; message?: string } };
+        // Distinguish "2FA code required / invalid" from wrong credentials
+        const detail = body.detail;
+        if (typeof detail === "object" && detail !== null) {
+          if (detail.code === "2fa_required") {
+            setNeeds2fa(true);
+            throw new Error(detail.message ?? "Enter your two-factor authentication code");
+          }
+          if (detail.code === "2fa_invalid") {
+            throw new Error("Invalid or expired 2FA code — try the next one");
+          }
+          throw new Error(detail.message ?? "Invalid credentials");
+        }
+        throw new Error(detail ?? "Invalid credentials");
       }
       const data = await res.json() as { access_token: string; refresh_token?: string };
       // Decode JWT payload to get actual roles
@@ -122,6 +140,31 @@ export default function LoginPage() {
               </div>
             </div>
 
+            {/* 2FA code */}
+            {needs2fa && (
+              <div>
+                <label className="mb-1.5 block text-[11px] font-mono uppercase tracking-widest text-amber-400">
+                  Two-Factor Code
+                </label>
+                <input
+                  type="text"
+                  value={totpCode}
+                  onChange={(e) => setTotpCode(e.target.value)}
+                  required
+                  autoFocus
+                  inputMode="numeric"
+                  autoComplete="one-time-code"
+                  maxLength={7}
+                  spellCheck={false}
+                  className="w-full rounded-lg border border-amber-500/40 bg-[#070d1a] px-3.5 py-2.5 text-center font-mono text-lg tracking-[0.3em] text-slate-200 outline-none placeholder:text-slate-600 focus:border-amber-500/60 focus:ring-1 focus:ring-amber-500/25 transition-colors"
+                  placeholder="••••••"
+                />
+                <p className="mt-1.5 text-center text-[11px] text-slate-500">
+                  Enter the 6-digit code from your authenticator app
+                </p>
+              </div>
+            )}
+
             {/* Error */}
             {error && (
               <p className="rounded-lg border border-red-500/20 bg-red-500/10 px-3 py-2 text-xs text-red-400">
@@ -138,7 +181,7 @@ export default function LoginPage() {
               {loading ? (
                 <><Loader2 className="h-4 w-4 animate-spin" /> Signing in…</>
               ) : (
-                "Sign in"
+                needs2fa ? "Verify & Sign in" : "Sign in"
               )}
             </button>
 

@@ -184,6 +184,7 @@ class TokenRequest(BaseModel):
     username: str
     password: str
     tenant_id: str | None = None
+    totp_code: str | None = None
 
 
 class TokenResponse(BaseModel):

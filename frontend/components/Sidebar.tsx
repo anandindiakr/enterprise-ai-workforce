@@ -38,6 +38,8 @@ import {
   Rocket,
   Network,
   History,
+  Menu,
+  X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { clearAuth, getUser, type AuthUser } from "@/lib/auth";
@@ -81,6 +83,7 @@ export function Sidebar() {
   const path     = usePathname();
   const router   = useRouter();
   const [collapsed, setCollapsed] = useState(false);
+  const [mobileOpen, setMobileOpen] = useState(false);
   const [user, setUser] = useState<AuthUser | null>(null);
   const [isSuperuser, setIsSuperuser] = useState<boolean | null>(null);
   const [onboardingDone, setOnboardingDone] = useState(true);
@@ -90,6 +93,11 @@ export function Sidebar() {
   useEffect(() => {
     setUser(getUser());
   }, []);
+
+  /* Close the mobile drawer whenever the route changes */
+  useEffect(() => {
+    setMobileOpen(false);
+  }, [path]);
 
   /* Resolve real platform-superuser status (Tenants page is superuser-only).
      null = unknown — keep the item visible until /auth/me answers. */
@@ -139,159 +147,228 @@ export function Sidebar() {
   /* Don't render sidebar on the login page */
   if (path === "/login") return null;
 
-  return (
-    <aside
-      className={cn(
-        "relative flex h-screen flex-col border-r border-[#1f2937] bg-[#070d1a] transition-all duration-300",
-        collapsed ? "w-[60px]" : "w-[220px]"
+  const visibleNav = NAV.filter(({ adminOnly, superuserOnly }) =>
+    (!adminOnly || user?.roles?.includes("admin")) &&
+    (!superuserOnly || isSuperuser !== false)
+  );
+
+  const navContent = (isCollapsed: boolean, onNavigate?: () => void) => (
+    <>
+      {/* Main nav */}
+      <nav className="space-y-1 px-2 pt-4">
+        {visibleNav.map(({ href, icon: Icon, label, adminOnly, badge }) => {
+          const active = path === href;
+          const showBadge = badge && href === "/onboarding" && !onboardingDone;
+          return (
+            <Link
+              key={href}
+              href={href}
+              onClick={onNavigate}
+              title={isCollapsed ? label : undefined}
+              className={cn(
+                "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm transition-all",
+                isCollapsed ? "justify-center" : "",
+                active
+                  ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                  : "text-slate-400 hover:bg-[#111827] hover:text-slate-200"
+              )}
+            >
+              <Icon className="h-4 w-4 flex-shrink-0" />
+              {!isCollapsed && (
+                <>
+                  <span className="flex-1">{label}</span>
+                  {showBadge && (
+                    <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-semibold text-black">
+                      {badge}
+                    </span>
+                  )}
+                  {adminOnly && !showBadge && <Lock className="h-2.5 w-2.5 flex-shrink-0 text-amber-600/50" />}
+                </>
+              )}
+            </Link>
+          );
+        })}
+      </nav>
+
+      {/* Departments */}
+      {!isCollapsed && (
+        <div className="mt-6 px-4 pb-4">
+          <p className="mb-2 text-[10px] uppercase tracking-[0.15em] text-slate-600">
+            Departments
+          </p>
+          <div className="space-y-0.5">
+            {DEPARTMENTS.map(({ id, label, icon: Icon, color }) => (
+              <Link
+                key={id}
+                href={`/chat?dept=${id}`}
+                onClick={onNavigate}
+                className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs text-slate-500 transition-colors hover:bg-[#111827] hover:text-slate-300"
+              >
+                <Icon className={cn("h-3 w-3 flex-shrink-0", color)} />
+                <span>{label}</span>
+                <span className="ml-auto h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-500 status-pulse" />
+              </Link>
+            ))}
+          </div>
+        </div>
       )}
-    >
-      {/* Logo */}
-      <div
+    </>
+  );
+
+  const footerContent = (isCollapsed: boolean) => (
+    <>
+      {!isCollapsed && user && (
+        <div className="flex items-center gap-2 rounded-lg bg-[#111827] px-2.5 py-2">
+          <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-amber-500/20">
+            <User className="h-3 w-3 text-amber-400" />
+          </div>
+          <div className="min-w-0 flex-1">
+            <p className="truncate font-mono text-[11px] font-medium text-slate-300">{user.username}</p>
+            <p className="font-mono text-[9px] uppercase tracking-wider text-slate-600">{user.roles[0] ?? "user"}</p>
+          </div>
+        </div>
+      )}
+
+      <button
+        onClick={handleLogout}
+        title="Sign out"
         className={cn(
-          "flex h-14 items-center border-b border-[#1f2937] px-4 flex-shrink-0",
-          collapsed ? "justify-center" : "gap-2.5"
+          "flex w-full items-center rounded-lg border border-[#1f2937] text-slate-400 transition-colors hover:border-red-500/30 hover:bg-red-500/10 hover:text-red-400",
+          isCollapsed ? "justify-center p-1.5" : "gap-2 px-3 py-2 text-xs font-medium"
         )}
       >
-        <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-amber-500">
-          <Zap className="h-4 w-4 text-black" strokeWidth={2.5} />
-        </div>
-        {!collapsed && (
+        <LogOut className="h-3.5 w-3.5 flex-shrink-0" />
+        {!isCollapsed && <span>Sign Out</span>}
+      </button>
+
+      {!isCollapsed && (
+        <div className="flex items-center gap-2 px-1">
           <span
-            className="font-display text-[13px] font-bold tracking-widest text-slate-100"
-            style={{ fontFamily: "var(--font-syne)" }}
-          >
-            WORKFORCE
+            className={`h-1.5 w-1.5 rounded-full ${
+              systemOk === null
+                ? "bg-slate-600"
+                : systemOk
+                ? "bg-emerald-500 status-pulse"
+                : "bg-red-500 status-pulse"
+            }`}
+          />
+          <span className="font-mono text-[10px] text-slate-500">
+            {systemOk === null ? "CHECKING SERVICES…" : systemOk ? "ALL SYSTEMS NOMINAL" : "SERVICE DEGRADED"}
           </span>
-        )}
-      </div>
+        </div>
+      )}
+    </>
+  );
 
-      {/* Scrollable nav + departments */}
-      <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-[#1f2937]">
-        {/* Main nav */}
-        <nav className="space-y-1 px-2 pt-4">
-          {NAV.filter(({ adminOnly, superuserOnly }) =>
-            (!adminOnly || user?.roles?.includes("admin")) &&
-            (!superuserOnly || isSuperuser !== false)
-          ).map(({ href, icon: Icon, label, adminOnly, badge }) => {
-            const active = path === href;
-            const showBadge = badge && href === "/onboarding" && !onboardingDone;
-            return (
-              <Link
-                key={href}
-                href={href}
-                title={collapsed ? label : undefined}
-                className={cn(
-                  "flex items-center gap-3 rounded-lg px-2.5 py-2 text-sm transition-all",
-                  collapsed ? "justify-center" : "",
-                  active
-                    ? "bg-amber-500/10 text-amber-400 border border-amber-500/20"
-                    : "text-slate-400 hover:bg-[#111827] hover:text-slate-200"
-                )}
-              >
-                <Icon className="h-4 w-4 flex-shrink-0" />
-                {!collapsed && (
-                  <>
-                    <span className="flex-1">{label}</span>
-                    {showBadge && (
-                      <span className="rounded-full bg-amber-500 px-1.5 py-0.5 text-[9px] font-semibold text-black">
-                        {badge}
-                      </span>
-                    )}
-                    {adminOnly && !showBadge && <Lock className="h-2.5 w-2.5 flex-shrink-0 text-amber-600/50" />}
-                  </>
-                )}
-              </Link>
-            );
-          })}
-        </nav>
-
-        {/* Departments */}
-        {!collapsed && (
-          <div className="mt-6 px-4 pb-4">
-            <p className="mb-2 text-[10px] uppercase tracking-[0.15em] text-slate-600">
-              Departments
-            </p>
-            <div className="space-y-0.5">
-              {DEPARTMENTS.map(({ id, label, icon: Icon, color }) => (
-                <Link
-                  key={id}
-                  href={`/chat?dept=${id}`}
-                  className="flex items-center gap-2.5 rounded-md px-2 py-1.5 text-xs text-slate-500 transition-colors hover:bg-[#111827] hover:text-slate-300"
-                >
-                  <Icon className={cn("h-3 w-3 flex-shrink-0", color)} />
-                  <span>{label}</span>
-                  <span className="ml-auto h-1.5 w-1.5 flex-shrink-0 rounded-full bg-emerald-500 status-pulse" />
-                </Link>
-              ))}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {/* Footer: user info + logout — pinned at bottom */}
-      <div className="flex-shrink-0 border-t border-[#1f2937] p-3 space-y-2">
-        {!collapsed && user && (
-          <div className="flex items-center gap-2 rounded-lg bg-[#111827] px-2.5 py-2">
-            <div className="flex h-6 w-6 flex-shrink-0 items-center justify-center rounded-full bg-amber-500/20">
-              <User className="h-3 w-3 text-amber-400" />
-            </div>
-            <div className="min-w-0 flex-1">
-              <p className="truncate font-mono text-[11px] font-medium text-slate-300">{user.username}</p>
-              <p className="font-mono text-[9px] uppercase tracking-wider text-slate-600">{user.roles[0] ?? "user"}</p>
-            </div>
-            <button
-              onClick={handleLogout}
-              title="Sign out"
-              className="text-slate-600 transition-colors hover:text-red-400"
-            >
-              <LogOut className="h-3.5 w-3.5" />
-            </button>
-          </div>
-        )}
-
-        {collapsed && (
-          <button
-            onClick={handleLogout}
-            title="Sign out"
-            className="flex w-full items-center justify-center rounded-lg border border-[#1f2937] p-1.5 text-slate-600 transition-colors hover:border-red-500/30 hover:text-red-400"
-          >
-            <LogOut className="h-3.5 w-3.5" />
-          </button>
-        )}
-
-        {!collapsed && (
-          <div className="flex items-center gap-2 px-1">
-            <span
-              className={`h-1.5 w-1.5 rounded-full ${
-                systemOk === null
-                  ? "bg-slate-600"
-                  : systemOk
-                  ? "bg-emerald-500 status-pulse"
-                  : "bg-red-500 status-pulse"
-              }`}
-            />
-            <span className="font-mono text-[10px] text-slate-500">
-              {systemOk === null ? "CHECKING SERVICES…" : systemOk ? "ALL SYSTEMS NOMINAL" : "SERVICE DEGRADED"}
-            </span>
-          </div>
-        )}
-
+  return (
+    <>
+      {/* ── Mobile hamburger (floating, only below lg) ─────────── */}
+      {!mobileOpen && (
         <button
-          onClick={() => setCollapsed((c) => !c)}
-          className="flex w-full items-center justify-center rounded-lg border border-[#1f2937] p-1.5 text-slate-500 transition-colors hover:border-[#374151] hover:text-slate-300"
-          title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          onClick={() => setMobileOpen(true)}
+          aria-label="Open menu"
+          className="fixed left-3 top-1.5 z-40 flex h-7 w-7 items-center justify-center rounded-lg border border-[#1f2937] bg-[#070d1a]/95 text-slate-300 shadow-lg transition-colors hover:text-amber-400 lg:hidden"
         >
-          {collapsed ? (
-            <ChevronRight className="h-3.5 w-3.5" />
-          ) : (
-            <div className="flex w-full items-center gap-2 text-xs">
-              <ChevronLeft className="h-3.5 w-3.5 flex-shrink-0" />
-              <span>Collapse</span>
-            </div>
-          )}
+          <Menu className="h-4 w-4" />
         </button>
-      </div>
-    </aside>
+      )}
+
+      {/* ── Desktop sidebar ────────────────────────────────────── */}
+      <aside
+        className={cn(
+          "relative hidden h-screen flex-col border-r border-[#1f2937] bg-[#070d1a] transition-all duration-300 lg:flex",
+          collapsed ? "w-[60px]" : "w-[220px]"
+        )}
+      >
+        {/* Logo */}
+        <div
+          className={cn(
+            "flex h-14 items-center border-b border-[#1f2937] px-4 flex-shrink-0",
+            collapsed ? "justify-center" : "gap-2.5"
+          )}
+        >
+          <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-amber-500">
+            <Zap className="h-4 w-4 text-black" strokeWidth={2.5} />
+          </div>
+          {!collapsed && (
+            <span
+              className="font-display text-[13px] font-bold tracking-widest text-slate-100"
+              style={{ fontFamily: "var(--font-syne)" }}
+            >
+              WORKFORCE
+            </span>
+          )}
+        </div>
+
+        {/* Scrollable nav + departments */}
+        <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-[#1f2937]">
+          {navContent(collapsed)}
+        </div>
+
+        {/* Footer: user info + logout — pinned at bottom */}
+        <div className="flex-shrink-0 border-t border-[#1f2937] p-3 space-y-2">
+          {footerContent(collapsed)}
+
+          <button
+            onClick={() => setCollapsed((c) => !c)}
+            className="flex w-full items-center justify-center rounded-lg border border-[#1f2937] p-1.5 text-slate-500 transition-colors hover:border-[#374151] hover:text-slate-300"
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+          >
+            {collapsed ? (
+              <ChevronRight className="h-3.5 w-3.5" />
+            ) : (
+              <div className="flex w-full items-center gap-2 text-xs">
+                <ChevronLeft className="h-3.5 w-3.5 flex-shrink-0" />
+                <span>Collapse</span>
+              </div>
+            )}
+          </button>
+        </div>
+      </aside>
+
+      {/* ── Mobile drawer (overlay) ────────────────────────────── */}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-50 lg:hidden">
+          <div
+            className="absolute inset-0 bg-black/70"
+            onClick={() => setMobileOpen(false)}
+            aria-hidden
+          />
+          <aside className="absolute left-0 top-0 flex h-full w-[250px] flex-col border-r border-[#1f2937] bg-[#070d1a] shadow-2xl">
+            {/* Logo + close */}
+            <div className="flex h-14 flex-shrink-0 items-center justify-between border-b border-[#1f2937] px-4">
+              <div className="flex items-center gap-2.5">
+                <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-lg bg-amber-500">
+                  <Zap className="h-4 w-4 text-black" strokeWidth={2.5} />
+                </div>
+                <span
+                  className="font-display text-[13px] font-bold tracking-widest text-slate-100"
+                  style={{ fontFamily: "var(--font-syne)" }}
+                >
+                  WORKFORCE
+                </span>
+              </div>
+              <button
+                onClick={() => setMobileOpen(false)}
+                aria-label="Close menu"
+                className="text-slate-500 transition-colors hover:text-slate-200"
+              >
+                <X className="h-4 w-4" />
+              </button>
+            </div>
+
+            {/* Scrollable nav */}
+            <div className="flex-1 min-h-0 overflow-y-auto scrollbar-thin scrollbar-track-transparent scrollbar-thumb-[#1f2937]">
+              {navContent(false, () => setMobileOpen(false))}
+            </div>
+
+            {/* Footer */}
+            <div className="flex-shrink-0 space-y-2 border-t border-[#1f2937] p-3">
+              {footerContent(false)}
+            </div>
+          </aside>
+        </div>
+      )}
+    </>
   );
 }

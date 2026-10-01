@@ -35,6 +35,8 @@ python-jose[cryptography]>=3.3.0
 passlib[bcrypt]>=1.7.4
 bcrypt>=4.2.0
 python-multipart>=0.0.12
+pyotp>=2.9.0
+qrcode[pil]>=8.0
 
 # Async work
 celery[redis]>=5.4.0

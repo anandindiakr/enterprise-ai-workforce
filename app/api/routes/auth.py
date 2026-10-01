@@ -117,6 +117,15 @@ class RefreshRequest(BaseModel):
     refresh_token: str
 
 
+class TwoFAEnableRequest(BaseModel):
+    code: str
+
+
+class TwoFADisableRequest(BaseModel):
+    password: str
+    code: str
+
+
 class ForgotPasswordRequest(BaseModel):
     email: str
 
@@ -147,6 +156,21 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Incorrect username or password",
         )
+    # ── Two-factor authentication gate ──────────────────────────────────
+    if getattr(user, "totp_enabled", False) and getattr(user, "totp_secret", None):
+        import pyotp
+        code = (payload.totp_code or "").replace(" ", "").strip()
+        if not code:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"code": "2fa_required", "message": "Two-factor authentication code required"},
+            )
+        totp = pyotp.TOTP(user.totp_secret)
+        if not totp.verify(code, valid_window=1):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail={"code": "2fa_invalid", "message": "Invalid or expired 2FA code"},
+            )
     expires_in = 3600
     token = create_access_token(
         subject=user.username,
@@ -299,6 +323,110 @@ async def change_password(
     await crud.change_password(db, user, payload.new_password)
     await db.commit()
     return {"message": "Password updated successfully"}
+
+
+# ── Two-factor authentication (TOTP) ──────────────────────────────────────────
+
+@router.get("/2fa/status", status_code=200)
+async def twofa_status(
+    principal: Principal = Depends(get_principal),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    user = await crud.get_user_by_username(db, principal.user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    return {"enabled": bool(getattr(user, "totp_enabled", False))}
+
+
+@router.post("/2fa/setup", status_code=200)
+async def twofa_setup(
+    principal: Principal = Depends(get_principal),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Generate a TOTP secret + QR code for the user to scan with their
+    authenticator app (Google Authenticator, Authy, 1Password, …).
+    The secret is stored but NOT activated until /2fa/enable is called
+    with a valid code."""
+    import base64
+    import io
+
+    import pyotp
+    import qrcode
+
+    user = await crud.get_user_by_username(db, principal.user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if getattr(user, "totp_enabled", False):
+        raise HTTPException(status_code=400, detail="Two-factor authentication is already enabled")
+
+    secret = pyotp.random_base32()
+    user.totp_secret = secret
+    user.totp_enabled = False
+    await db.commit()
+
+    otpauth_url = pyotp.totp.TOTP(secret).provisioning_uri(
+        name=user.email, issuer_name="AI Workforce"
+    )
+    img = qrcode.make(otpauth_url)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    qr_png = base64.b64encode(buf.getvalue()).decode()
+
+    return {
+        "secret": secret,
+        "otpauth_url": otpauth_url,
+        "qr_png": f"data:image/png;base64,{qr_png}",
+    }
+
+
+@router.post("/2fa/enable", status_code=200)
+async def twofa_enable(
+    payload: TwoFAEnableRequest,
+    principal: Principal = Depends(get_principal),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    import pyotp
+
+    user = await crud.get_user_by_username(db, principal.user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if getattr(user, "totp_enabled", False):
+        return {"enabled": True, "message": "Two-factor authentication is already enabled"}
+    if not getattr(user, "totp_secret", None):
+        raise HTTPException(status_code=400, detail="Run 2FA setup first")
+
+    code = (payload.code or "").replace(" ", "").strip()
+    if not pyotp.TOTP(user.totp_secret).verify(code, valid_window=1):
+        raise HTTPException(status_code=400, detail="Invalid or expired code — try the next one")
+
+    user.totp_enabled = True
+    await db.commit()
+    return {"enabled": True, "message": "Two-factor authentication enabled"}
+
+
+@router.post("/2fa/disable", status_code=200)
+async def twofa_disable(
+    payload: TwoFADisableRequest,
+    principal: Principal = Depends(get_principal),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    import pyotp
+
+    user = await crud.get_user_by_username(db, principal.user_id)
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if not getattr(user, "totp_enabled", False):
+        return {"enabled": False, "message": "Two-factor authentication is not enabled"}
+    if not crud.verify_password(payload.password, user.hashed_password):
+        raise HTTPException(status_code=400, detail="Password is incorrect")
+    code = (payload.code or "").replace(" ", "").strip()
+    if not pyotp.TOTP(user.totp_secret).verify(code, valid_window=1):
+        raise HTTPException(status_code=400, detail="Invalid or expired code")
+
+    user.totp_secret = None
+    user.totp_enabled = False
+    await db.commit()
+    return {"enabled": False, "message": "Two-factor authentication disabled"}
 
 
 # ── User management (admin) ───────────────────────────────────────────────────

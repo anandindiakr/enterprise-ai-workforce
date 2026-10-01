@@ -54,6 +54,8 @@ async def init_db() -> None:
     await _add_missing_column("products", "website_url", "VARCHAR(1024)")
     await _add_missing_column("products", "website_scraped_at", "TIMESTAMPTZ")
     await _add_missing_column("products", "website_scrape_status", "VARCHAR(32)")
+    await _add_missing_column("users", "totp_secret", "VARCHAR(255)")
+    await _add_missing_column("users", "totp_enabled", "BOOLEAN NOT NULL DEFAULT FALSE")
 
     async with AsyncSessionLocal() as db:
         # ── Admin account ──────────────────────────────────────────────────
