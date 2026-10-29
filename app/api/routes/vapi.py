@@ -39,6 +39,21 @@ class OutboundCallRequest(BaseModel):
     department: str = "sales"
 
 
+@router.get("/web-call-config")
+async def get_web_call_config(
+    principal: Principal = Depends(get_principal),
+) -> dict[str, Any]:
+    """Config the browser needs to start an in-app test call against our live
+    Vapi receptionist (via the Vapi Web SDK). The public key is designed to be
+    used client-side (restrict its allowed origins in the Vapi dashboard);
+    the private API key never leaves the server."""
+    return {
+        "configured": bool(settings.vapi_public_key and settings.vapi_assistant_id),
+        "publicKey": settings.vapi_public_key,
+        "assistantId": settings.vapi_assistant_id,
+    }
+
+
 @router.post("/outbound-call")
 async def trigger_outbound_call(
     body: OutboundCallRequest,

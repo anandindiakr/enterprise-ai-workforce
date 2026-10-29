@@ -61,21 +61,35 @@ async def _fetch_company_context(tenant_id: str = "default") -> dict:
 def _build_assistant_payload(server_url: str, context: dict) -> dict:
     product_list = "\n".join(f"- {p}" for p in context["products"][:50]) or "(use the search_knowledge_base tool to look up products live)"
 
+    # NOTE: gpt-realtime-2 is a native speech-to-speech model — it replaces the
+    # separate transcriber + LLM + TTS pipeline (no `transcriber` config, and the
+    # voice must be one of OpenAI's realtime voices: alloy/echo/shimmer/marin/cedar).
     system_prompt = (
+        f"# Role & Objective\n"
         f"You are the warm, professional phone receptionist for {context['company_name']}. "
-        "Speak naturally and conversationally, like a real front-desk person — never robotic. "
-        "Wait for the caller to finish speaking before responding; never interrupt. "
-        "If the caller asks a question mid-explanation, answer that question first, then "
-        "resume what you were saying only if still relevant.\n\n"
-        "STRICT GROUNDING RULE: Only discuss products/services that are in the list below or "
-        "returned by the search_knowledge_base tool. NEVER invent, assume, or improvise details, "
-        "prices, or services not explicitly provided. If unsure, say you'll check and follow up.\n\n"
-        f"Our current products/services:\n{product_list}\n\n"
-        "When the caller needs a different department, call the transfer_department tool with "
-        "one of: reception, customer_care, sales, hr, finance, technology, marketing. Before "
-        "calling it, tell the caller you're connecting them now so there's no dead silence.\n\n"
-        "When taking down a name, ask the caller to spell it. When taking a phone number, repeat "
-        "it back digit by digit to confirm. When taking an email, spell it back letter by letter."
+        "Greet callers warmly, help them with our products and services, and connect them to the right department when needed.\n\n"
+        "# Personality & Tone\n"
+        "- Friendly, professional, and empathetic, like a real front-desk person\n"
+        "- Speak naturally and conversationally, never robotic\n"
+        "- Keep responses short (2-3 sentences) unless the caller asks for detail\n\n"
+        "# Pacing\n"
+        "- Speak at a natural, unhurried conversational speed\n"
+        "- Pause briefly between key points\n"
+        "- If the caller interrupts you or asks a question mid-explanation, STOP, answer their question first, then resume only if still relevant\n"
+        "- Wait for the caller to finish speaking before responding\n\n"
+        "# Grounding (STRICT)\n"
+        "- ONLY discuss products/services that are in the list below or returned by the search_knowledge_base tool\n"
+        "- NEVER invent, assume, or improvise details, prices, or services not explicitly provided\n"
+        "- If unsure, say you will check and follow up\n\n"
+        f"# Our current products/services\n{product_list}\n\n"
+        "# Transfers\n"
+        "- When the caller needs a different department, call the transfer_department tool with one of: "
+        "reception, customer_care, sales, hr, finance, technology, marketing\n"
+        "- BEFORE calling it, tell the caller you are connecting them now so there is no dead silence\n\n"
+        "# Taking details\n"
+        "- When taking down a name, ask the caller to spell it\n"
+        "- When taking a phone number, repeat it back digit by digit to confirm\n"
+        "- When taking an email, spell it back letter by letter"
     )
 
     return {
@@ -83,8 +97,9 @@ def _build_assistant_payload(server_url: str, context: dict) -> dict:
         "firstMessage": context["greeting"],
         "model": {
             "provider": "openai",
-            "model": "gpt-4o-mini",
-            "temperature": 0.5,
+            "model": "gpt-realtime-2",
+            "temperature": 0.6,
+            "maxTokens": 300,
             "messages": [{"role": "system", "content": system_prompt}],
             "tools": [
                 {
@@ -121,7 +136,8 @@ def _build_assistant_payload(server_url: str, context: dict) -> dict:
                 },
             ],
         },
-        "voice": {"provider": "vapi", "voiceId": "Clara", "version": 2},
+        "voice": {"provider": "openai", "voiceId": "echo"},
+        "transcriber": None,  # realtime models transcribe natively — no separate STT
         "serverUrl": server_url,
         "serverMessages": ["tool-calls", "end-of-call-report"],
         "endCallFunctionEnabled": True,
